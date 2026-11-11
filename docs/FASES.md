@@ -12,7 +12,7 @@
 | 7 | Metro V1: blocos, categorias, animações | ✅ Concluída (11/11/2026) |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ✅ Concluída (11/11/2026) |
 | 9 | Integração, memória, estabilidade, desempenho | ✅ Concluída (11/11/2026) |
-| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | ⏳ Próxima — depende da cadeia xsdk (autorização) |
+| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | 🔶 XEX gerado (0.8.0-beta); **aguardando o teste no console** |
 
 Política de releases: toda versão é publicada como **pré-release (beta)** até a Fase 10
 terminar; só então uma versão é marcada como *Latest*.
@@ -149,3 +149,15 @@ terminar; só então uma versão é marcada como *Latest*.
   estado mostra não confirmados, erros de conversão, esperados × carregados × ausentes,
   recursos externos e estado do XEX.
 - Relatório completo: [RELATORIO_AUDIO_XEX.md](RELATORIO_AUDIO_XEX.md).
+
+## Fase 10 — andamento (0.8.0-beta)
+- Cadeia do xsdk construída no WSL (GCC 15.3.0 `powerpc-xsdk-elf`, binutils, newlib,
+  glslang-xenon), com autorização do usuário; biblioteca e exemplos do xsdk compilados.
+- `src/platform/xbox360/`: vídeo (quadro da CPU → textura → quad na GPU → resolve → apresentação),
+  controles (`XamInputGetState`), áudio (`xsdk_audio`, 48 kHz), arquivos em `game:/`, log ao lado
+  do `.xex`.
+- `NeutroX.xex` compilado sem avisos; cabeçalho conferido com `tools/xex_inspect.py` (XEX2,
+  título `0x4E455558`, versão 0.8.0.0, sem criptografia, importa só `xam.xex` e `xboxkrnl.exe`).
+- **Não testado em hardware.** O Xenia não apresenta a imagem de títulos do xsdk; a
+  conclusão da fase depende do teste no console descrito em
+  [INSTALACAO_XBOX.md](INSTALACAO_XBOX.md). Só depois disso uma versão vira *Latest*.

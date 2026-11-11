@@ -11,10 +11,11 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: beta 0.7.2 (Fases 1–9 concluídas + extração local de sons originais com bancos XACT).** Roda hoje como **prévia no Windows**.
-> O executável para o console (`.xex`) ainda **não** existe — ver [Fase 10](docs/FASES.md)
-> e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). As **cinco interfaces estão completas** e integradas
-> (opções salvas, memória otimizada, teste de resistência); falta a compilação para o console (Fase 10).
+> **Status: beta 0.8.0 (Fases 1–9 concluídas; Fase 10: `NeutroX.xex` gerado, aguardando teste no console).**
+> Roda como **prévia no Windows**; o `.xex` para o Xbox 360 é compilado pela cadeia do xsdk
+> ([docs/TOOLCHAIN.md](docs/TOOLCHAIN.md)) e **ainda não foi testado em hardware** —
+> instalação e roteiro de teste em [docs/INSTALACAO_XBOX.md](docs/INSTALACAO_XBOX.md). As **cinco interfaces estão completas** e integradas
+> (opções salvas, memória otimizada, teste de resistência).
 
 ![Menu principal](docs/img/menu_principal.png)
 
@@ -105,7 +106,9 @@ tests/           testes automatizados
 - [Relatório da Fase 1](docs/RELATORIO_FASE1.md) — análise do pacote, XEX, imagens, áudio
 - [Arquitetura](docs/ARQUITETURA.md)
 - [Ferramentas de compilação e porta para o console](docs/TOOLCHAIN.md)
+- [Instalar e testar no Xbox 360 (Aurora)](docs/INSTALACAO_XBOX.md)
 - [Sons](docs/SONS.md)
+- [Relatório de áudio dos cinco XEX](docs/RELATORIO_AUDIO_XEX.md)
 - [Relatório de testes](docs/RELATORIO_TESTES.md)
 - [Limitações](docs/LIMITACOES.md)
 - [Fases](docs/FASES.md)

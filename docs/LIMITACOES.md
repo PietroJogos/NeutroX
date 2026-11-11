@@ -1,11 +1,13 @@
-# Limitações conhecidas (versão 0.7.0-beta)
+# Limitações conhecidas (versão 0.8.0-beta)
 
 ## Plataforma
-- **Não existe executável para o Xbox 360 ainda.** Nenhuma ferramenta desta máquina gera
-  XEX. O caminho escolhido (xsdk em WSL) exige baixar e compilar a cadeia GCC do projeto,
-  o que depende da sua autorização. Ver [TOOLCHAIN.md](TOOLCHAIN.md).
-- **Nada foi testado em hardware.** Não há declaração de compatibilidade com o console,
-  o Aurora ou o RGH até um teste real.
+- O `NeutroX.xex` existe e é compilado pela cadeia do xsdk ([TOOLCHAIN.md](TOOLCHAIN.md)), mas
+  **nada foi testado em hardware.** Não há declaração de compatibilidade com o console, o
+  Aurora ou o RGH até um teste real ([INSTALACAO_XBOX.md](INSTALACAO_XBOX.md)).
+- O Xenia não serve para validar: ele não apresenta a imagem dos títulos do xsdk.
+- No console, a imagem é sempre desenhada pela CPU (1280×720; se a saída for outra, o xsdk
+  informa o tamanho e o renderizador se ajusta). O custo por quadro no Xenon é desconhecido
+  até o teste (no PC, 1–10 ms).
 - O renderizador é em software. No PC sobra folga em 720p (≈1–10 ms por quadro); em 1080p
   a troca de canal do NXE fica em ≈22 ms (≈45 FPS durante a animação). No processador do
   Xbox 360 o custo será maior. O caminho por GPU está planejado (Fase 10).

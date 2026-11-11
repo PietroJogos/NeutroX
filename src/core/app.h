@@ -10,7 +10,7 @@
 
 namespace nx {
 
-constexpr const char* kNeutroXVersion = "0.7.2";
+constexpr const char* kNeutroXVersion = "0.8.0";
 
 struct FrameStats {
     uint64_t frames = 0;

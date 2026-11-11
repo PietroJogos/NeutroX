@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NeutroX VERSION 0.7.2 LANGUAGES CXX)
+project(NeutroX VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,19 @@ if(MSVC)
     target_compile_definitions(neutrox_core PUBLIC _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(neutrox_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
+endif()
+
+# Xbox 360 (RGH/JTAG) com o SDK homebrew xsdk, configurado com:
+#   cmake -S . -B build_xbox -G Ninja -DCMAKE_TOOLCHAIN_FILE=<xsdk>/cmake/xsdk.cmake -DXSDK_TOOLCHAIN=<prefixo>
+# Gera build_xbox/NeutroX.xex (ver docs/TOOLCHAIN.md e docs/INSTALACAO_XBOX.md).
+if(XSDK)
+    add_executable(NeutroX src/platform/xbox360/platform_xbox360.cpp)
+    # Inicializadores designados das structs C do xsdk deixam os demais campos em zero de proposito.
+    set_source_files_properties(src/platform/xbox360/platform_xbox360.cpp PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
+    target_link_libraries(NeutroX PRIVATE neutrox_core)
+    xsdk_add_shaders(NeutroX src/platform/xbox360/blit.vert src/platform/xbox360/blit.frag)
+    xsdk_add_xex(NeutroX TITLE_ID 0x4E455558 NAME "Neutro X" VERSION ${PROJECT_VERSION}.0)
+    return()  # ferramentas e testes de PC nao sao compilados para o console
 endif()
 
 find_package(Threads REQUIRED)

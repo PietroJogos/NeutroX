@@ -1,4 +1,4 @@
-# Relatório de testes — 0.7.2-beta
+# Relatório de testes — 0.8.0-beta
 
 Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
@@ -109,8 +109,20 @@ Os valores variam entre execuções (a máquina estava com outros programas aber
 | Teste opcional com a pasta real (`NEUTROX_DADOS_REAIS`) | Metro V2: 7 de 8 efeitos carregados, 52 arquivos, 17 não confirmados, 0 erros; demais versões 0 ("sem acesso: XEX criptografado"); cada interface deixa residente só o próprio conjunto ✅ |
 | Texto da interface | `glyph_check.py` agora também decodifica escapes `\x..`; encontrou e corrigiu "…" ✅ |
 
+## Compilação para o Xbox 360 (Fase 10)
+
+| Verificação | Resultado |
+|---|---|
+| Cadeia `powerpc-xsdk-elf` (GCC 15.3.0) e glslang-xenon | construídas no WSL; `TOOLCHAIN_OK` ✅ |
+| xsdk: `make` e `make samples` | `libxsdk.a`, `libxsc.so` e os exemplos (`hello`, `cube`, `sound`, `triangle`, `template`) compilados ✅ |
+| `NeutroX.xex` | compilado sem avisos (≈2,4 MB) ✅ |
+| Cabeçalho (`tools/xex_inspect.py`) | XEX2, título `0x4E455558`, versão do projeto, sem criptografia, importa `xam.xex` e `xboxkrnl.exe`, pilha de 1 MB ✅ |
+| Execução no console | **não testada** (ver abaixo) |
+
 ## Não testado
-- **Hardware Xbox 360 / Aurora / RGH**: não há executável para o console ainda.
+- **Hardware Xbox 360 / Aurora / RGH**: o `NeutroX.xex` não foi executado em um console.
+  Roteiro do teste: [INSTALACAO_XBOX.md](INSTALACAO_XBOX.md). O Xenia não apresenta a imagem
+  de títulos do xsdk e por isso não foi usado como prova.
 - Controle físico do Xbox 360 no PC: o caminho XInput está implementado, mas não foi
   exercitado nesta sessão (os testes usam entrada simulada).
 - Áudio audível: o mixer é testado numericamente; a saída waveOut não foi ouvida aqui.
