@@ -124,3 +124,14 @@ terminar; só então uma versão é marcada como *Latest*.
   abrem e as falhas de gravação são registradas sem travar.
 - **Desempenho**: medições ao vivo de todas as animações em 720p e 1080p; relatório de
   memória por interface.
+## Extra (0.7.1) — extração automática dos sons originais
+- `tools/xex_unpack.cpp` (`neutrox_xex_unpack`): extrai a imagem de XEX **não
+  criptografados** (LZX), verifica MZ/PE e grava os pacotes de recursos; recusa os
+  criptografados.
+- `tools/sound_extract.py`: processamento em lote — versão pelo Execution ID, áudios
+  embutidos nos pacotes XUIZ, conversão XMA → WAV (FFmpeg), funções só por nome original,
+  instalação em `%LOCALAPPDATA%\NeutroX\sons_originais`, `ausentes.ini` com causas.
+- Resultado com os arquivos fornecidos: **Metro V2 17559 → 16 áudios, 6 de 8 efeitos**;
+  Blades, NXE, Kinect e Metro V1 continuam fechados (criptografados).
+- Tela "Sons originais: estado": total de arquivos encontrados, arquivos por versão,
+  arquivo real de cada efeito e a causa registrada de cada ausência.

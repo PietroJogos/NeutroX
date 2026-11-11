@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NeutroX VERSION 0.7.0 LANGUAGES CXX)
+project(NeutroX VERSION 0.7.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,6 +57,9 @@ endif()
 # Ferramenta: exporta os temas sonoros RECRIADOS (originais do Neutro X) em WAV.
 add_executable(neutrox_sound_export tools/sound_export.cpp)
 target_link_libraries(neutrox_sound_export PRIVATE neutrox_core)
+
+# Ferramenta: extrai a imagem de um XEX NAO criptografado (somente leitura; usada por tools/sound_extract.py).
+add_executable(neutrox_xex_unpack tools/xex_unpack.cpp)
 
 # Testes automatizados (plataforma headless).
 add_executable(neutrox_tests tests/test_main.cpp)

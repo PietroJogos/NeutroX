@@ -1,9 +1,9 @@
-# Relatório de testes — 0.7.0-beta
+# Relatório de testes — 0.7.1-beta
 
 Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
 
-**Resultado: 946 verificações aprovadas, 0 falharam.**
+**Resultado: 966 verificações aprovadas, 0 falharam** (inclui o teste opcional com a pasta real).
 
 | # | Teste obrigatório | Como foi verificado | Resultado |
 |---|---|---|---|
@@ -92,6 +92,21 @@ Os valores variam entre execuções (a máquina estava com outros programas aber
 ## Prévia Windows real
 `NeutroX.exe --frames 300 --mute --data <pasta> --screenshot final.png` com
 `default_dashboard=metro_v2`: abriu direto no Metro V2, 300 quadros, pior quadro 11,2 ms, saída limpa.
+
+## Extração dos sons originais (local, fora do repositório)
+
+| Verificação | Resultado |
+|---|---|
+| XEX criptografados (6717, 9199, 13604, 15574) | recusados com motivo registrado (sem chaves, sem contorno) ✅ |
+| Descompressão do 17559 (`neutrox_xex_unpack`) | imagem de 16.941.056 bytes, MZ+PE válidos, 36 pacotes `XUIZ`; **idêntica** nas compilações MSVC e GCC ✅ |
+| Áudios embutidos encontrados | 16 (pacote `controlp`), todos XMA 44,1 kHz ✅ |
+| Conversão para WAV (FFmpeg `xma1`) | 16 de 16; sinal contínuo (autocorrelação ≈ 1), estéreo correlacionado ✅ |
+| Funções por nome original | 6 de 8 (navegar, confirmar, voltar, categoria, abrir, transição) ✅ |
+| Ausências registradas com causa | erro, entrada (banco externo `dash.xwb`/`dash.xsb` não fornecido) ✅ |
+| Carregador do Neutro X | lê `ausentes.ini`, conta todos os `.wav` da pasta; teste com pasta simulada ✅ |
+| Teste opcional com a pasta real (`NEUTROX_DADOS_REAIS`) | Metro V2: 6 de 8 efeitos carregados, 16 arquivos; demais versões 0; cada interface toca os originais do seu tema e fica muda onde não há original (sem substituição) ✅ |
+| `NeutroX.exe` com a pasta real | log: "Sons originais Metro V2 17559: 6 de 8 carregados" ✅ |
+| Texto da interface | `glyph_check.py` agora também decodifica escapes `\x..`; encontrou e corrigiu "…" ✅ |
 
 ## Não testado
 - **Hardware Xbox 360 / Aurora / RGH**: não há executável para o console ainda.

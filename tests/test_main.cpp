@@ -130,7 +130,7 @@ static void testFont() {
         if (!f.hasGlyph(uint32_t(c))) std::printf("  sem glifo: '%c'\n", c);
         CHECK(f.hasGlyph(uint32_t(c)));
     }
-    const char* pt = "áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ×·–—°";
+    const char* pt = "áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ×·–—°…→←↑↓";
     const char* p = pt;
     while (uint32_t cp = utf8Next(p)) CHECK(f.hasGlyph(cp));
     const GlyphBitmap& g = f.glyph('A', 32, FontWeight::Regular);
@@ -354,9 +354,16 @@ static void testOriginalSounds() {
     writeBytes(bl + "som_ok.wav", bytes);
     writeBytes(bl + "voltar.wav", xma);
     writeBytes(bl + "mapeamento.ini", std::vector<uint8_t>{'c','o','n','f','i','r','m','a','r','=','s','o','m','_','o','k','.','w','a','v','\n'});
+    writeBytes(bl + "extra_original.wav", bytes);  // original sem funcao identificada
+    const char aus[] = "# gerado pelo extrator\nerro=causa registrada pelo extrator\n";
+    writeBytes(bl + "ausentes.ini", std::vector<uint8_t>(aus, aus + sizeof(aus) - 1));
     Mixer m;
     m.loadOriginals(base);
     OrigReport rep = m.originalsReport();
+    CHECK(rep.filesInFolder[int(SoundTheme::Blades6717)] == 4);  // navegar, som_ok, voltar(.wav XMA), extra
+    CHECK(rep.filesInFolder[int(SoundTheme::Nxe9199)] == 0);
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Error)].reason == "causa registrada pelo extrator");
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Startup)].reason == "arquivo não encontrado");
     CHECK(rep.loaded(SoundTheme::Blades6717) == 2);
     CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Navigate)].status == OrigStatus::Loaded);
     CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Confirm)].status == OrigStatus::Loaded);
@@ -1379,6 +1386,48 @@ static void testMemoryReport() {
     }
 }
 
+// Opcional: valida sons originais REAIS instalados pelo extrator. So roda se a
+// variavel NEUTROX_DADOS_REAIS apontar para a pasta de dados que contem
+// sons_originais/ (material proprietario nunca entra no repositorio).
+static void testRealOriginals() {
+    const char* real = std::getenv("NEUTROX_DADOS_REAIS");
+    if (!real || !*real) return;
+    section("Sons originais reais (pasta local do usuario)");
+    std::string dir = real;
+    if (dir.back() != '/' && dir.back() != '\\') dir += '/';
+    Harness h(dir);
+    h.app.init();
+    OrigReport rep = h.plat.mixer().originalsReport();
+    for (int t = 1; t < kSoundThemeCount; ++t)
+        std::printf("  %-16s %d de %d efeitos com funcao, %d arquivos na pasta\n", soundThemeInfo(SoundTheme(t)).folder,
+                    rep.loaded(SoundTheme(t)), kSfxCount, rep.filesInFolder[t]);
+    int total = 0;
+    for (int t = 1; t < kSoundThemeCount; ++t) total += rep.filesInFolder[t];
+    CHECK(total > 0);
+    h.idle(3.0f);
+    h.waitIdle();
+    // O dashboard com originais toca os arquivos reais (vozes criadas no tema certo)
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h.app.openDashboard(DashboardId(d));
+        h.waitIdle();
+        CHECK(h.plat.mixer().theme() == soundThemeFor(DashboardId(d)));
+        h.plat.mixer().stopAll();
+        h.plat.mixer().play(Sfx::Confirm);
+        int voices = h.plat.mixer().activeVoices();
+        bool hasOrig = rep.e[int(soundThemeFor(DashboardId(d)))][int(Sfx::Confirm)].status == OrigStatus::Loaded;
+        CHECK(voices == (hasOrig ? 1 : 0));  // sem original: mudo, sem substituicao
+    }
+    h.app.openMainMenu();
+    h.waitIdle();
+    h.app.openSoundStatus();
+    h.waitIdle();
+    h.idle(0.5f);
+    for (int i = 0; i < 4; ++i) h.tap(Button::Down);  // Metro V2
+    h.idle(0.3f);
+    h.shot("80_sons_originais_reais");
+    h.app.shutdown();
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -1615,6 +1664,7 @@ int main(int argc, char** argv) {
     testSettings();
     testAudio();
     testOriginalSounds();
+    testRealOriginals();
     testAppFlow();
     testBlades();
     testNxe();

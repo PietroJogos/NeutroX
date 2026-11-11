@@ -24,9 +24,11 @@
   nenhuma configuração do console é lida.
 
 ## Sons
-- Os sons originais **não** acompanham o projeto. Os XEX fornecidos não têm áudio
-  acessível sem descriptografia (4 de 5) ou descompressão (Metro V2); veja
-  [SONS.md](SONS.md). O carregamento a partir de pasta local está pronto.
+- Os sons originais **não** acompanham o projeto. A extração automática local
+  (`tools/sound_extract.py`) obtém **16 áudios do Metro V2** (6 dos 8 efeitos); os outros
+  quatro XEX estão criptografados e não são abertos (seria contornar proteção). Veja
+  [SONS.md](SONS.md).
+- Bancos de sons XACT externos (`dash.xwb`/`dash.xsb`) são detectados, mas ainda não lidos.
 - XMA não é suportado; é preciso converter para WAV PCM.
 - Com a fonte "Originais" (padrão) e a pasta vazia, os dashboards ficam sem efeitos
   sonoros — por decisão de projeto, não há substituição automática.

@@ -486,6 +486,19 @@ private:
     bool yes_ = false;  // padrao seguro: "Nao"
 };
 
+// Corta o texto (por codepoint UTF-8) para caber em maxW, terminando com reticencias.
+std::string fitText(IRenderer& r, const std::string& s, const TextStyle& st, float maxW) {
+    if (r.measureText(s.c_str(), st) <= maxW) return s;
+    std::string cut = s;
+    const std::string ell = "\xE2\x80\xA6";  // reticencias
+    while (!cut.empty()) {
+        size_t n = cut.size() - 1;
+        while (n > 0 && (static_cast<unsigned char>(cut[n]) & 0xC0) == 0x80) --n;  // inicio do codepoint
+        cut.erase(n);
+        if (r.measureText((cut + ell).c_str(), st) <= maxW) return cut + ell;
+    }
+    return ell;
+}
 // ------------------------------------------- Estado dos sons originais
 
 class SoundStatusScreen : public Screen {
@@ -538,6 +551,15 @@ public:
                               ? "Fonte atual: ORIGINAIS. Efeitos ausentes ficam mudos (sem substituição automática)."
                               : "Fonte atual: RECRIADOS pelo Neutro X (escolhida em Configurações).";
         r.drawText(src, 124, 126, note);
+        int totalFiles = 0;
+        for (int ti = 1; ti < kSoundThemeCount; ++ti) totalFiles += rep_.filesInFolder[ti];
+        TextStyle tf;
+        tf.size = 18;
+        tf.weight = FontWeight::Bold;
+        tf.color = totalFiles ? Color(140, 230, 120) : Color(240, 160, 120);
+        std::string tot = "Arquivos originais encontrados: " + std::to_string(totalFiles) + "  ·  efeitos com função: " +
+                          std::to_string(rep_.totalLoaded()) + " de " + std::to_string((kSoundThemeCount - 1) * kSfxCount);
+        r.drawText(tot.c_str(), 124, 144, tf);
 
         // Lista de versoes
         for (int i = 0; i < kDashboardCount; ++i) {
@@ -555,7 +577,9 @@ public:
             TextStyle vs;
             vs.size = 15;
             vs.color = sel ? Color(235, 240, 245) : Color(150, 160, 172);
-            r.drawText(soundThemeInfo(th).folder, 81, row.y + 34, vs);
+            std::string sub = std::string(soundThemeInfo(th).folder) + "  ·  " + std::to_string(rep_.filesInFolder[int(th)]) +
+                              (rep_.filesInFolder[int(th)] == 1 ? " arquivo" : " arquivos");
+            r.drawText(sub.c_str(), 81, row.y + 34, vs);
             TextStyle cs;
             cs.size = 22;
             cs.align = Align::Right;
@@ -577,7 +601,12 @@ public:
             fs.size = 20;
             fs.weight = FontWeight::Bold;
             fs.color = Color(235, 240, 245);
-            std::string label = std::string(sfxFileName(Sfx(s))) + ".wav";
+            // efeito -> arquivo original real (pode vir do mapeamento.ini)
+            std::string label = sfxFileName(Sfx(s));
+            if (e.status == OrigStatus::Loaded) {
+                size_t slash = e.file.find_last_of("/\\");
+                label += "  \xE2\x86\x92  " + (slash == std::string::npos ? e.file : e.file.substr(slash + 1));
+            }
             r.drawText(label.c_str(), panel.x + 44, y + 2, fs);
             TextStyle ds;
             ds.size = 15;
@@ -590,6 +619,7 @@ public:
             } else {
                 det = e.reason;
             }
+            det = fitText(r, det, ds, panel.w - 64);
             r.drawText(det.c_str(), panel.x + 44, y + 28, ds);
         }
         r.fillRect(Rectf{0, 668, 1280, 52}, Color(0, 0, 0, 90));

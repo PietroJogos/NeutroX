@@ -11,7 +11,7 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: beta 0.7.0 (Fases 1–9 concluídas).** Roda hoje como **prévia no Windows**.
+> **Status: beta 0.7.1 (Fases 1–9 concluídas + extração local de sons originais).** Roda hoje como **prévia no Windows**.
 > O executável para o console (`.xex`) ainda **não** existe — ver [Fase 10](docs/FASES.md)
 > e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). As **cinco interfaces estão completas** e integradas
 > (opções salvas, memória otimizada, teste de resistência); falta a compilação para o console (Fase 10).
@@ -94,7 +94,8 @@ src/dashboards/  registro e telas das cinco interfaces
 src/shell/       menu inicial, configurações, sobre, menu START, diálogos, erro
 src/platform/    win32 (prévia), headless (testes), xbox360 (porta futura)
 assets/          sons recriados exportados em WAV, por versão
-tools/           xex_inspect.py (análise de cabeçalho), glyph_check.py (texto x fonte), exportador de sons
+tools/           xex_inspect.py (cabeçalho), xex_unpack.cpp + sound_extract.py (extração local de
+                 sons originais), glyph_check.py (texto x fonte), exportador de sons recriados
 docs/            relatórios, arquitetura, toolchain, limitações, fases
 tests/           testes automatizados
 ```

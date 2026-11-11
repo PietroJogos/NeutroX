@@ -94,6 +94,12 @@ estatístico esperado em dados aleatórios desse tamanho — não é um arquivo 
   - 17559: tecnicamente acessível descomprimindo LZX (compressão não é proteção), mas o
     conteúdo é material da Microsoft; mesmo que extraído, **não pode ir para o repositório
     público**, e a permissão de uso é decisão sua. A descompressão não foi feita nesta fase.
+- **Atualização (extração automática):** a imagem do 17559 foi descomprimida localmente por
+  uma ferramenta própria (`tools/xex_unpack.cpp`, LZX, somente leitura). Os 36 recursos são
+  pacotes XUIZ; o pacote `controlp` contém **16 áudios XMA embutidos** (6 com função
+  identificada pelo nome), e os sons principais da interface ficam num banco externo
+  (`dash.xwb`/`dash.xsb`) que não foi fornecido. Os outros quatro XEX continuam fechados
+  (criptografados). Detalhes e lista completa em [`SONS.md`](SONS.md).
 - **O que foi implementado:** carregamento de sons originais a partir de uma pasta local
   **fora do repositório**, uma subpasta por versão, troca automática ao mudar de dashboard,
   e tela de estado que mostra, por efeito, o que carregou e o motivo exato das falhas.

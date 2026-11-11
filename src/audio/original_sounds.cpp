@@ -3,7 +3,10 @@
 // Somente le arquivos que o proprio usuario colocou na pasta de dados.
 // Nao descriptografa, nao descomprime e nao extrai nada de executaveis.
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <exception>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include "audio/audio.h"
@@ -178,13 +181,42 @@ void Mixer::loadOriginals(const std::string& baseDir) {
                     if (k == sfxFileName(Sfx(s))) names[s] = v;
             }
         }
+        // ausentes.ini (opcional, gerado pelo extrator): efeito=causa da ausencia
+        std::string causes[kSfxCount];
+        std::vector<uint8_t> aus;
+        if (readFile(dir + "ausentes.ini", aus, 64 * 1024)) {
+            std::string text(aus.begin(), aus.end());
+            size_t pos = 0;
+            while (pos < text.size()) {
+                size_t nl = text.find('\n', pos);
+                std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
+                pos = nl == std::string::npos ? text.size() : nl + 1;
+                if (line.empty() || line[0] == '#') continue;
+                size_t eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                std::string k = trim(line.substr(0, eq));
+                for (int s = 0; s < kSfxCount; ++s)
+                    if (k == sfxFileName(Sfx(s))) causes[s] = trim(line.substr(eq + 1));
+            }
+        }
+        // conta todos os .wav da pasta (originais instalados, com ou sem funcao)
+        try {
+            std::filesystem::path p = std::filesystem::u8path(dir);
+            if (std::filesystem::is_directory(p))
+                for (const auto& de : std::filesystem::directory_iterator(p)) {
+                    std::string ext = de.path().extension().u8string();
+                    for (char& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                    if (de.is_regular_file() && ext == ".wav") rep.filesInFolder[t]++;
+                }
+        } catch (const std::exception&) {
+        }
         for (int s = 0; s < kSfxCount; ++s) {
             OrigEntry& en = rep.e[t][s];
             en.file = dir + names[s];
             std::vector<uint8_t> bytes;
             if (!readFile(en.file, bytes, 16u * 1024u * 1024u)) {
                 en.status = OrigStatus::Missing;
-                en.reason = "arquivo não encontrado";
+                en.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
                 continue;
             }
             if (bytes.size() > 16u * 1024u * 1024u) {

@@ -67,6 +67,9 @@ struct OrigEntry {
 struct OrigReport {
     std::string baseDir;
     OrigEntry e[kSoundThemeCount][kSfxCount];
+    // Total de arquivos .wav originais presentes na pasta da versao (inclui os
+    // que nao tem funcao identificada), p.ex. instalados por tools/sound_extract.py.
+    int filesInFolder[kSoundThemeCount] = {};
     int loaded(SoundTheme t) const;
     int totalLoaded() const;
 };
