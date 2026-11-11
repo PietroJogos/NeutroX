@@ -56,7 +56,8 @@ struct AvatarLook {
     Color pants = Color::hex(0x2B3442);
     Color shoes = Color::hex(0xEDEDED);
 };
-void drawAvatar(IRenderer& r, float cx, float footY, float height, const AvatarLook& look, float time = 0);
+// wave 0..1: levanta o braco direito e acena.
+void drawAvatar(IRenderer& r, float cx, float footY, float height, const AvatarLook& look, float time = 0, float wave = 0);
 
 // Arte abstrata deterministica para blocos/cartoes de demonstracao.
 void drawAbstractArt(IRenderer& r, const Rectf& rc, int seed, Color c1, Color c2);

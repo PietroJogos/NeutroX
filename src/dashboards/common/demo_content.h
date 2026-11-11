@@ -1,6 +1,7 @@
 // Neutro X - conteudo de demonstracao compartilhado pelos dashboards
 // (jogos, amigos, midias). Tudo ficticio e original; nada e executado.
 #pragma once
+#include <string>
 #include "core/types.h"
 
 namespace nx {
@@ -32,6 +33,16 @@ struct DemoMedia {
 const DemoMedia* demoMusic(int& count);
 const DemoMedia* demoVideos(int& count);
 const DemoMedia* demoPictures(int& count);
+
+// Linha generica de painel/lista informativa (usada pelos dashboards).
+struct InfoRow {
+    int icon = 0;  // valor de nx::Icon
+    std::string title, sub, desc;
+    float progress = -1;  // 0..1 desenha barra
+    int artSeed = 0;      // != 0: arte no painel lateral
+    Color c1, c2;
+    int action = 0;       // codigo especifico de cada dashboard
+};
 
 // Perfil local ficticio exibido nas interfaces.
 struct DemoProfile {

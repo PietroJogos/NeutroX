@@ -7,8 +7,8 @@
 | 3 | Menu principal: logo, seleção com miniaturas, navegação, configurações | ✅ Concluída (11/11/2026) |
 | — | Extra: temas sonoros por versão + carregador de sons originais (pasta local) | ✅ Concluído (11/11/2026) |
 | 4 | Blades: lâminas, abas, animações, navegação, sons | ✅ Concluída (11/11/2026) |
-| 5 | NXE: painéis, canais, animações, avatar genérico | ⏳ Próxima |
-| 6 | Kinect: cartões, layout, transições | Pendente |
+| 5 | NXE: painéis, canais, animações, avatar genérico | ✅ Concluída (11/11/2026) |
+| 6 | Kinect: cartões, layout, transições | ⏳ Próxima |
 | 7 | Metro V1: blocos, categorias, animações | Pendente |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | Pendente |
 | 9 | Integração, memória, estabilidade, desempenho | Pendente (base já testada) |
@@ -50,3 +50,15 @@ terminar; só então uma versão é marcada como *Latest*.
 - "Configurações do Neutro X" e "Sobre" abrem as telas do próprio app.
 - Desempenho: cache de cena — quadros parados viram uma cópia de memória; o gradiente
   radial ficou 2× mais rápido (tabela de cores).
+## Fase 5 — resultado (NXE)
+- Canais empilhados no canto superior esquerdo (Meu Xbox, Biblioteca de Jogos, Mídia,
+  Configurações): Cima/Baixo ou LB/RB trocam de canal com deslize vertical.
+- Cartões grandes em profundidade (5 posições que encolhem para o fundo): Esquerda/Direita
+  giram a "esteira" com animação; contador "x de N" e indicação do próximo canal.
+- Avatar genérico próprio diante do cartão de perfil, com respiração; **X faz o avatar acenar**.
+- Painéis (A): perfil, amigos, conquistas com barras, mensagens, atividade, biblioteca com
+  todos os jogos de demonstração (cartões com arte; "Jogar" só informa que é demonstração),
+  mídia, sistema somente-leitura, família; "Neutro X" e "Sobre" abrem as telas do app.
+- **Editor de avatar**: seis cores de camiseta, com prévia ao vivo.
+- **Fundo personalizado** (Y): Verde, Céu, Pôr do sol e Noite; mostrar/ocultar avatar.
+- Sons do tema NXE 9199. Quadros parados em cache; o avatar anima ao vivo por cima.

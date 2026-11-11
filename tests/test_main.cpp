@@ -632,6 +632,135 @@ static void testBlades() {
     CHECK(h.plat.renderer().textureCount() == 0);
 }
 
+static void testNxe() {
+    section("Fase 5: NXE - canais, cartoes em profundidade, avatar, paineis");
+    Harness h(tempDir("nxe"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    h.app.openDashboard(DashboardId::Nxe);
+    h.waitIdle();
+    h.idle(1.0f);
+    CHECK(has(h.app.topDebugState(), "channel=0 card=0 panel=0"));
+    h.shot("30_nxe_meu_xbox");
+    // Cartoes: Direita/Esquerda com limites
+    h.tap(Button::Right);
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "card=2"));
+    h.step(0, 8);
+    h.shot("31_nxe_esteira");
+    h.tap(Button::Left);
+    h.tap(Button::Left);
+    h.tap(Button::Left);  // limite
+    CHECK(has(h.app.topDebugState(), "card=0"));
+    // Avatar acena (X)
+    h.idle(0.6f);
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "wave=1"));
+    h.idle(0.6f);
+    h.shot("32_nxe_avatar_acenando");
+    h.idle(2.5f);
+    CHECK(has(h.app.topDebugState(), "wave=0"));
+    // Canais: Baixo/RB avancam, Cima/LB voltam, com limites
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "channel=1"));
+    h.step(0, 8);
+    h.shot("33_nxe_troca_canal");
+    h.idle(0.8f);
+    for (int i = 0; i < 3; ++i) h.tap(Button::Right);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "channel=1 card=3"));
+    h.shot("34_nxe_biblioteca");
+    // Painel de jogo
+    h.tap(Button::A);
+    h.idle(0.6f);
+    CHECK(has(h.app.topDebugState(), "panel=1 panelSel=0"));
+    h.tap(Button::A);  // "Jogar": demonstracao, nao executa
+    CHECK(has(h.app.topDebugState(), "panel=1"));
+    h.tap(Button::Down);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "panelSel=1"));
+    h.shot("35_nxe_painel_jogo");
+    h.tap(Button::B);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "panel=0"));
+    h.tap(Button::RB);
+    h.tap(Button::RB);
+    h.tap(Button::RB);  // limite
+    CHECK(has(h.app.topDebugState(), "channel=3"));
+    h.tap(Button::LB);
+    CHECK(has(h.app.topDebugState(), "channel=2"));
+    h.idle(0.8f);
+    h.shot("36_nxe_midia");
+    h.tap(Button::Down);
+    h.idle(0.6f);
+    // Configuracoes -> "Neutro X" abre a tela do shell
+    for (int i = 0; i < 3; ++i) h.tap(Button::Right);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "NXE");
+    // B: volta ao primeiro cartao, depois ao primeiro canal
+    h.tap(Button::B);
+    CHECK(has(h.app.topDebugState(), "channel=3 card=0"));
+    h.tap(Button::B);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "channel=0"));
+    // Editor de avatar: camiseta
+    for (int i = 0; i < 4; ++i) h.tap(Button::Right);
+    h.tap(Button::A);
+    h.idle(0.4f);
+    h.tap(Button::Down);
+    h.tap(Button::Down);
+    h.tap(Button::A);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "shirt=2"));
+    h.shot("37_nxe_editor_avatar");
+    h.tap(Button::B);
+    for (int i = 0; i < 4; ++i) h.tap(Button::Left);
+    h.idle(0.8f);
+    // Opcoes: fundo personalizado e avatar
+    int tex = h.plat.renderer().textureCount();
+    h.tap(Button::Y);
+    h.idle(0.3f);
+    CHECK(has(h.app.topDebugState(), "options=1"));
+    h.tap(Button::A);
+    h.tap(Button::A);  // Verde -> Ceu -> Por do sol
+    CHECK(has(h.app.topDebugState(), "theme=2"));
+    CHECK(h.plat.renderer().textureCount() == tex);
+    h.idle(0.3f);
+    h.shot("38_nxe_opcoes");
+    h.tap(Button::A);  // Noite
+    h.tap(Button::B);
+    h.idle(0.6f);
+    h.shot("39_nxe_noite");
+    h.tap(Button::Y);
+    h.tap(Button::Down);
+    h.tap(Button::A);  // ocultar avatar
+    CHECK(has(h.app.topDebugState(), "avatar=0"));
+    h.tap(Button::B);
+    h.tap(Button::X);  // sem avatar: nao acena
+    CHECK(has(h.app.topDebugState(), "wave=0"));
+    // Todos os cartoes de todos os canais abrem e fecham sem erro
+    const int counts[4] = {6, 9, 4, 5};
+    for (int c = 0; c < 4; ++c) {
+        for (int k = 0; k < counts[c]; ++k) {
+            h.tap(Button::A);
+            h.step(0, 10);
+            if (std::string(h.app.topScreenName()) != "NXE") { h.tap(Button::B); h.waitIdle(); }
+            else if (has(h.app.topDebugState(), "panel=1")) { h.tap(Button::B); h.step(0, 10); }
+            h.tap(Button::Right);
+        }
+        h.tap(Button::Down);
+    }
+    CHECK(std::string(h.app.topScreenName()) == "NXE");
+    CHECK(logErrorCount() == 0);
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -815,17 +944,17 @@ static void testPerformance() {
 
     // Pior caso realista: o dashboard Blades AO VIVO durante a animacao de troca
     // de lamina. Usa a mediana por quadro (resistente a ruido da maquina).
-    {
+    auto liveBench = [](DashboardId id, const char* label, Button fwd, Button back) {
         Harness h(tempDir("perf_live"), 1280, 720);
         h.app.init();
         h.idle(3.0f);
         h.waitIdle();
-        h.app.openDashboard(DashboardId::Blades);
+        h.app.openDashboard(id);
         h.waitIdle();
         h.idle(1.2f);
         std::vector<double> ft;
         for (int round = 0; round < 6; ++round) {
-            h.step(bit(round % 2 ? Button::LB : Button::RB), 1);
+            h.step(bit(round % 2 ? back : fwd), 1);
             for (int f = 0; f < 24; ++f) {
                 double t0 = nowMs();
                 h.step(0, 1);
@@ -834,10 +963,13 @@ static void testPerformance() {
         }
         std::sort(ft.begin(), ft.end());
         double med = ft[ft.size() / 2], p90 = ft[ft.size() * 9 / 10];
-        std::printf("  Blades ao vivo (troca de lamina, 720p): mediana %.2f ms, p90 %.2f ms\n", med, p90);
+        std::printf("  %s ao vivo (720p): mediana %.2f ms, p90 %.2f ms\n", label, med, p90);
         CHECK(med < 16.7);
         h.app.shutdown();
-    }
+    };
+    liveBench(DashboardId::Blades, "Blades troca de lamina", Button::RB, Button::LB);
+    liveBench(DashboardId::Nxe, "NXE troca de canal", Button::Down, Button::Up);
+    liveBench(DashboardId::Nxe, "NXE esteira de cartoes", Button::Right, Button::Left);
 }
 
 int main(int argc, char** argv) {
@@ -856,6 +988,7 @@ int main(int argc, char** argv) {
     testOriginalSounds();
     testAppFlow();
     testBlades();
+    testNxe();
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();

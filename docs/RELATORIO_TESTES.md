@@ -1,9 +1,9 @@
-# Relatório de testes — 0.2.0-beta
+# Relatório de testes — 0.3.0-beta
 
 Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
 
-**Resultado: 507 verificações aprovadas, 0 falharam.**
+**Resultado: 535 verificações aprovadas, 0 falharam.**
 
 | # | Teste obrigatório | Como foi verificado | Resultado |
 |---|---|---|---|
@@ -20,6 +20,7 @@ Comando: `build/Release/neutrox_tests.exe build/test_output`
 | — | Controle desconectado | 2 s desconectado dentro de um dashboard, aviso exibido, sem travar; reconexão | ✅ |
 | — | Sons por versão | Tema muda com o dashboard; menu START usa sons do Neutro X; WAV/XMA/mapeamento; ausente = mudo | ✅ |
 | — | Resoluções | 1280×720, 1920×1080 (escala 1,5) e 640×480 (barras) | ✅ |
+| — | **NXE (Fase 5)** | Canais e cartões com limites, esteira e troca de canal animadas, avatar acena (X) e não acena oculto, painel de jogo ("Jogar" não executa), editor de avatar, 4 fundos sem vazar textura, todos os cartões de todos os canais abrem/fecham, nenhum erro registrado | ✅ |
 | — | **Blades (Fase 4)** | 4 lâminas, limites, animação de troca, 6 subpainéis por lâmina abrem/fecham, rolagem até o último jogo, opções (fundo grafite recria a textura sem vazar), atalhos para Configurações/Sobre, nenhum erro registrado | ✅ |
 
 ## Desempenho (CPU, renderizador em software, PC de desenvolvimento)
@@ -28,23 +29,30 @@ Média por quadro logo após abrir cada tela (inclui a animação de entrada):
 
 | Tela | 1280×720 | 1920×1080 |
 |---|---:|---:|
-| Menu principal | 5,6 ms | 12,3 ms |
-| Blades | 4,7 ms | 9,0 ms |
-| NXE (provisório) | 1,9 ms | 4,2 ms |
-| Kinect (provisório) | 2,2 ms | 3,5 ms |
-| Metro V1 (provisório) | 2,2 ms | 4,0 ms |
-| Metro V2 (provisório) | 2,0 ms | 5,1 ms |
+| Menu principal | 5,0 ms | 12,1 ms |
+| Blades | 3,3 ms | 8,6 ms |
+| NXE | 2,1 ms | 4,7 ms |
+| Kinect (provisório) | 1,4 ms | 3,4 ms |
+| Metro V1 (provisório) | 1,4 ms | 3,8 ms |
+| Metro V2 (provisório) | 1,4 ms | 3,8 ms |
 
-Pior caso realista — Blades ao vivo durante a troca de lâmina (720p): **mediana 7,5 ms,
-p90 9,6 ms**. Com a interface parada, o quadro vem do cache de cena (cópia de memória).
+Pior caso realista, ao vivo durante animações (720p):
+
+| Animação | Mediana | p90 |
+|---|---:|---:|
+| Blades — troca de lâmina | 7,2 ms | 8,6 ms |
+| NXE — troca de canal | 10,6 ms | 13,3 ms |
+| NXE — esteira de cartões | 4,2 ms | 5,2 ms |
+
+Com a interface parada, o quadro vem do cache de cena (cópia de memória); no NXE só o
+avatar é desenhado ao vivo por cima.
 
 Os valores variam entre execuções (a máquina estava com outros programas abertos) e
 **não representam o Xbox 360**.
 
 ## Prévia Windows real
 `NeutroX.exe --frames 300 --mute --data <pasta> --screenshot final.png` com
-`default_dashboard=blades`: abriu direto no Blades, 300 quadros, pior quadro 13,6 ms,
-saída limpa.
+`default_dashboard=nxe`: abriu direto no NXE, 300 quadros, pior quadro 12,4 ms, saída limpa.
 
 ## Não testado
 - **Hardware Xbox 360 / Aurora / RGH**: não há executável para o console ainda.

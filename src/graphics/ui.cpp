@@ -418,13 +418,12 @@ void drawNeutroBands(IRenderer& r, float time, Color accent) {
     }
 }
 
-void drawAvatar(IRenderer& r, float cx, float footY, float height, const AvatarLook& L, float time) {
+void drawAvatar(IRenderer& r, float cx, float footY, float height, const AvatarLook& L, float time, float wave) {
     // Proporcoes estilizadas (cabeca grande), unidade u = altura/10.
     const float u = height / 10.0f;
     const float sway = std::sin(time * 1.6f) * 0.06f * u;  // respiracao/balanco leve
     const float top = footY - height;
     // sombra no chao
-    r.fillCircle(cx, footY, u * 1.6f, Color(0, 0, 0, 0));
     {
         std::vector<Vec2> sh;
         for (int i = 0; i < 16; ++i) {
@@ -441,12 +440,23 @@ void drawAvatar(IRenderer& r, float cx, float footY, float height, const AvatarL
     r.fillRoundRect(Rectf{cx + 0.05f * u, top + 9.45f * u, 1.25f * u, 0.55f * u}, 0.25f * u, L.shoes);
     // bracos
     r.fillRoundRect(Rectf{cx - 1.95f * u, top + 3.75f * u + sway, 0.7f * u, 3.0f * u}, 0.35f * u, L.shirt);
-    r.fillRoundRect(Rectf{cx + 1.25f * u, top + 3.75f * u + sway, 0.7f * u, 3.0f * u}, 0.35f * u, L.shirt);
+    const bool waving = wave > 0.01f;
+    if (!waving) r.fillRoundRect(Rectf{cx + 1.25f * u, top + 3.75f * u + sway, 0.7f * u, 3.0f * u}, 0.35f * u, L.shirt);
     r.fillCircle(cx - 1.6f * u, top + 6.85f * u + sway, 0.38f * u, L.skin);
-    r.fillCircle(cx + 1.6f * u, top + 6.85f * u + sway, 0.38f * u, L.skin);
+    if (!waving) r.fillCircle(cx + 1.6f * u, top + 6.85f * u + sway, 0.38f * u, L.skin);
     // tronco
     r.fillRoundRect(Rectf{cx - 1.35f * u, top + 3.6f * u + sway * 0.5f, 2.7f * u, 3.0f * u}, 0.6f * u, L.shirt);
     r.fillRect(Rectf{cx - 1.3f * u, top + 6.05f * u, 2.6f * u, 0.35f * u}, brighten(L.pants, -0.2f));
+    if (waving) {
+        // braco direito girando do ombro: para baixo (90 graus) -> para cima, oscilando
+        float w = clampf(wave, 0, 1);
+        float ang = lerpf(90.0f, -65.0f + 18.0f * std::sin(time * 11.0f), w) * kPi / 180.0f;
+        float sx = cx + 1.55f * u, sy = top + 4.1f * u + sway;
+        float hx = sx + std::cos(ang) * 2.9f * u, hy = sy + std::sin(ang) * 2.9f * u;
+        r.fillCircle(sx, sy, 0.36f * u, L.shirt);
+        r.drawLine(sx, sy, hx, hy, 0.7f * u, L.shirt);
+        r.fillCircle(hx, hy, 0.42f * u, L.skin);
+    }
     // estampa propria na camiseta (anel)
     r.strokeCircle(cx, top + 4.9f * u + sway * 0.5f, 0.42f * u, 0.12f * u, Color(255, 255, 255, 150));
     // pescoco e cabeca
