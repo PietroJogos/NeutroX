@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NeutroX VERSION 0.3.0 LANGUAGES CXX)
+project(NeutroX VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,7 +31,7 @@ add_library(neutrox_core STATIC
     src/dashboards/common/demo_content.cpp
     src/dashboards/blades/blades_dashboard.cpp
     src/dashboards/nxe/nxe_dashboard.cpp
-    src/dashboards/kinect/kinect_preview.cpp
+    src/dashboards/kinect/kinect_dashboard.cpp
     src/dashboards/metro_v1/metro_v1_preview.cpp
     src/dashboards/metro_v2/metro_v2_preview.cpp
     src/shell/main_menu.cpp

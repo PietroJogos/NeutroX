@@ -761,6 +761,141 @@ static void testNxe() {
     CHECK(h.plat.renderer().textureCount() == 0);
 }
 
+static void testKinect() {
+    section("Fase 6: Kinect - grade, paginas, destaque, paginas de botoes");
+    Harness h(tempDir("kinect"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    h.app.openDashboard(DashboardId::Kinect);
+    h.waitIdle();
+    h.idle(1.0f);
+    CHECK(has(h.app.topDebugState(), "section=0 sel=0 detail=0"));
+    h.shot("40_kinect_inicio");
+    // Grade 4x2: limites e passagem de pagina pela borda
+    for (int i = 0; i < 3; ++i) h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "section=0 sel=3"));
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "sel=7"));
+    h.tap(Button::Down);  // limite
+    CHECK(has(h.app.topDebugState(), "sel=7"));
+    h.tap(Button::Up);
+    h.tap(Button::Right);  // borda direita -> proxima secao
+    CHECK(has(h.app.topDebugState(), "section=1 sel=0"));
+    h.step(0, 10);
+    h.shot("41_kinect_deslize_pagina");
+    h.tap(Button::Left);  // borda esquerda -> secao anterior, ultima coluna
+    CHECK(has(h.app.topDebugState(), "section=0 sel=3"));
+    h.tap(Button::LB);  // primeira secao: limite
+    CHECK(has(h.app.topDebugState(), "section=0"));
+    h.idle(0.8f);
+    // Secoes por LB/RB
+    h.tap(Button::RB);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "section=1"));
+    h.tap(Button::Right);
+    h.idle(0.6f);
+    h.shot("42_kinect_jogos");
+    // Favorito
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "favs=1"));
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "favs=0"));
+    h.tap(Button::X);
+    // Pagina de botoes grandes
+    h.tap(Button::A);
+    h.idle(0.6f);
+    CHECK(has(h.app.topDebugState(), "detail=1 detailSel=0"));
+    h.tap(Button::A);  // "Jogar": demonstracao
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.tap(Button::Down);
+    h.idle(0.4f);
+    h.shot("43_kinect_pagina_jogo");
+    for (int i = 0; i < 4; ++i) h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "detailSel=3"));  // ultimo botao: Voltar
+    h.tap(Button::A);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "detail=0"));
+    for (int i = 0; i < 4; ++i) h.tap(Button::RB);
+    h.tap(Button::RB);  // limite
+    CHECK(has(h.app.topDebugState(), "section=5"));
+    h.idle(0.8f);
+    h.shot("44_kinect_configuracoes");
+    // Sensor Kinect: informa que nao e usado
+    for (int i = 0; i < 3; ++i) h.tap(Button::Right);
+    h.tap(Button::A);
+    h.idle(0.6f);
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.shot("45_kinect_sensor");
+    h.tap(Button::B);
+    h.idle(0.4f);
+    // Baixo sob linha mais curta: vai ao ultimo cartao (Sobre, 5); "Neutro X" (4) abre as configuracoes
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "section=5 sel=5"));
+    h.tap(Button::Left);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Kinect");
+    // B: primeiro cartao da secao; B de novo: Inicio. Atalho "Musica" do Inicio leva a secao Musica
+    h.tap(Button::B);
+    CHECK(has(h.app.topDebugState(), "section=5 sel=0"));
+    h.tap(Button::B);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "section=0 sel=0"));
+    h.tap(Button::Right);
+    h.tap(Button::A);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "section=3"));
+    h.tap(Button::B);
+    h.idle(0.8f);
+    // Opcoes
+    int tex = h.plat.renderer().textureCount();
+    h.tap(Button::Y);
+    h.idle(0.3f);
+    CHECK(has(h.app.topDebugState(), "options=1"));
+    h.tap(Button::A);
+    CHECK(has(h.app.topDebugState(), "theme=1"));
+    CHECK(h.plat.renderer().textureCount() == tex);
+    h.idle(0.3f);
+    h.shot("46_kinect_opcoes");
+    h.tap(Button::A);  // grafite
+    h.tap(Button::Down);
+    h.tap(Button::A);  // ocultar avatar
+    CHECK(has(h.app.topDebugState(), "theme=2 avatar=0"));
+    h.tap(Button::B);
+    h.idle(0.6f);
+    h.shot("47_kinect_grafite");
+    // Todos os cartoes de todas as secoes abrem e fecham sem erro
+    const int counts[6] = {8, 8, 6, 5, 5, 6};
+    int opened = 0;
+    for (int s = 0; s < 6; ++s) {
+        for (int i = 0; i < counts[s]; ++i) {
+            // posiciona: Inicio (B, B), secao s (RB), cartao i (Direita/Baixo)
+            h.tap(Button::B);
+            h.tap(Button::B);
+            h.step(0, 20);
+            for (int k = 0; k < s; ++k) h.tap(Button::RB);
+            for (int k = 0; k < i / 4; ++k) h.tap(Button::Down);
+            for (int k = 0; k < i % 4; ++k) h.tap(Button::Right);
+            std::string want = "section=" + std::to_string(s) + " sel=" + std::to_string(i) + " ";
+            CHECK(has(h.app.topDebugState(), want.c_str()));
+            h.tap(Button::A);
+            h.step(0, 10);
+            ++opened;
+            if (std::string(h.app.topScreenName()) != "Kinect") { h.tap(Button::B); h.waitIdle(); }
+            else if (has(h.app.topDebugState(), "detail=1")) { h.tap(Button::B); h.step(0, 10); }
+        }
+    }
+    CHECK(opened == 38);
+    CHECK(std::string(h.app.topScreenName()) == "Kinect");
+    CHECK(logErrorCount() == 0);
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -970,6 +1105,8 @@ static void testPerformance() {
     liveBench(DashboardId::Blades, "Blades troca de lamina", Button::RB, Button::LB);
     liveBench(DashboardId::Nxe, "NXE troca de canal", Button::Down, Button::Up);
     liveBench(DashboardId::Nxe, "NXE esteira de cartoes", Button::Right, Button::Left);
+    liveBench(DashboardId::Kinect, "Kinect deslize de pagina", Button::RB, Button::LB);
+    liveBench(DashboardId::Kinect, "Kinect destaque na grade", Button::Down, Button::Up);
 }
 
 int main(int argc, char** argv) {
@@ -989,6 +1126,7 @@ int main(int argc, char** argv) {
     testAppFlow();
     testBlades();
     testNxe();
+    testKinect();
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();

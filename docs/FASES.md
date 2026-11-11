@@ -8,8 +8,8 @@
 | — | Extra: temas sonoros por versão + carregador de sons originais (pasta local) | ✅ Concluído (11/11/2026) |
 | 4 | Blades: lâminas, abas, animações, navegação, sons | ✅ Concluída (11/11/2026) |
 | 5 | NXE: painéis, canais, animações, avatar genérico | ✅ Concluída (11/11/2026) |
-| 6 | Kinect: cartões, layout, transições | ⏳ Próxima |
-| 7 | Metro V1: blocos, categorias, animações | Pendente |
+| 6 | Kinect: cartões, layout, transições | ✅ Concluída (11/11/2026) |
+| 7 | Metro V1: blocos, categorias, animações | ⏳ Próxima |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | Pendente |
 | 9 | Integração, memória, estabilidade, desempenho | Pendente (base já testada) |
 | 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | Pendente — depende da cadeia xsdk |
@@ -62,3 +62,17 @@ terminar; só então uma versão é marcada como *Latest*.
 - **Editor de avatar**: seis cores de camiseta, com prévia ao vivo.
 - **Fundo personalizado** (Y): Verde, Céu, Pôr do sol e Noite; mostrar/ocultar avatar.
 - Sons do tema NXE 9199. Quadros parados em cache; o avatar anima ao vivo por cima.
+## Fase 6 — resultado (Kinect)
+- Grade 4×2 de cartões grandes sobre ondas roxas e verdes, com título translúcido grande
+  da seção.
+- Seis seções como páginas lado a lado (Início, Jogos, Aplicativos, Música, Vídeos,
+  Configurações): LB/RB ou passar da borda com Esquerda/Direita desliza com interpolação;
+  indicador de seções embaixo.
+- O cartão selecionado "salta" (escala + moldura branca) e o destaque desliza entre os
+  cartões; Baixo sob uma linha mais curta vai ao último cartão dela.
+- A abre páginas simplificadas de **botões grandes** (jogo, perfil, amigos, mídia,
+  aplicativos, sistema somente-leitura, família); atalhos do Início levam às seções.
+- **X marca favorito** (estrela no cartão). B: primeiro cartão → Início.
+- Y: fundos Roxo, Azul e Grafite; mostrar/ocultar avatar (na margem esquerda).
+- **Sem sensor**: um aviso fixo e o cartão "Sensor Kinect" explicam que tudo funciona
+  pelo controle. Sons do tema Kinect 13604.
