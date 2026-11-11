@@ -1,0 +1,24 @@
+# Build
+build/
+build_*/
+out/
+*.obj
+*.pdb
+*.ilk
+.vs/
+
+# Material proprietário: NUNCA versionar
+*.xex
+*.xzp
+*.xma
+sons_originais/
+referencias/
+NeutroX_Pacote_*/
+*.zip
+
+# Dados locais do usuário
+neutrox.ini
+neutrox.log
+captura_*.png
+
+dist/

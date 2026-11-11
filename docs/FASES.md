@@ -1,0 +1,38 @@
+# Registro das fases
+
+| Fase | Conteúdo | Situação |
+|---|---|---|
+| 1 | Análise do pacote, XEX, imagens, ferramentas, estrutura | ✅ Concluída (11/11/2026) |
+| 2 | Núcleo: loop, telas, erros, abstrações de vídeo/controle/áudio, configurações | ✅ Concluída (11/11/2026) |
+| 3 | Menu principal: logo, seleção com miniaturas, navegação, configurações | ✅ Concluída (11/11/2026) |
+| — | Extra: temas sonoros por versão + carregador de sons originais (pasta local) | ✅ Concluído (11/11/2026) |
+| 4 | Blades: lâminas, abas, animações, navegação, sons | ⏳ Próxima |
+| 5 | NXE: painéis, canais, animações, avatar genérico | Pendente |
+| 6 | Kinect: cartões, layout, transições | Pendente |
+| 7 | Metro V1: blocos, categorias, animações | Pendente |
+| 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | Pendente |
+| 9 | Integração, memória, estabilidade, desempenho | Pendente (base já testada) |
+| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | Pendente — depende da cadeia xsdk |
+
+Política de releases: toda versão é publicada como **pré-release (beta)** até a Fase 10
+terminar; só então uma versão é marcada como *Latest*.
+
+## Fase 1 — resultado
+- Relatório: [RELATORIO_FASE1.md](RELATORIO_FASE1.md).
+- Versões dos cinco XEX confirmadas pelo Execution ID.
+- Ferramenta `tools/xex_inspect.py` (somente leitura).
+- Estrutura do projeto e build CMake funcionando.
+
+## Fase 2 — resultado
+- `App` com pilha de telas adiada, transições com tela de carregamento, tratamento de
+  falhas/exceções na carga, toasts, contador de FPS.
+- `IRenderer` + `SoftRenderer` + fonte vetorial própria + ícones.
+- `InputMapper` com repetição, analógico com histerese e desconexão.
+- `Mixer` com sons sintetizados; configurações validadas com gravação atômica.
+- Plataformas: Windows (GDI + XInput + waveOut) e headless (testes).
+
+## Fase 3 — resultado
+- Abertura animada, menu inicial com as cinco interfaces (miniaturas desenhadas por código),
+  Configurações, Sobre, Sair (com confirmação), menu START dentro dos dashboards com troca
+  direta de interface, tela de erro.
+- Dashboard padrão (abre direto ao iniciar) e ação contextual X para defini-lo.

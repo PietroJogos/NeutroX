@@ -1,0 +1,700 @@
+// Neutro X - testes automatizados (plataforma headless, sem janela).
+//
+// Cobre os testes obrigatorios executaveis no PC: inicializacao, controle,
+// selecao das cinco interfaces, navegacao, troca repetida, memoria, taxa de
+// quadros (tempo de CPU), integridade das configuracoes, recuperacao de erros
+// e encerramento seguro. Tambem grava capturas PNG para inspecao visual.
+//
+// Uso: neutrox_tests [pasta_de_saida]
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <stdexcept>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <new>
+#include <string>
+#include <vector>
+
+#include "audio/audio.h"
+#include "core/app.h"
+#include "core/log.h"
+#include "core/png_writer.h"
+#include "graphics/font.h"
+#include "graphics/soft_renderer.h"
+#include "input/input.h"
+#include "platform/headless/headless_platform.h"
+#include "settings/settings.h"
+
+// ------------------------------------------------ contador de memoria
+static std::atomic<long long> g_liveBytes{0};
+static std::atomic<long long> g_liveAllocs{0};
+void* operator new(std::size_t n) {
+    void* p = std::malloc(n + 16);
+    if (!p) throw std::bad_alloc();
+    *static_cast<std::size_t*>(p) = n;
+    g_liveBytes += (long long)n;
+    g_liveAllocs++;
+    return static_cast<char*>(p) + 16;
+}
+void operator delete(void* p) noexcept {
+    if (!p) return;
+    char* b = static_cast<char*>(p) - 16;
+    g_liveBytes -= (long long)*reinterpret_cast<std::size_t*>(b);
+    g_liveAllocs--;
+    std::free(b);
+}
+void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
+void* operator new[](std::size_t n) { return operator new(n); }
+void operator delete[](void* p) noexcept { operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { operator delete(p); }
+
+using namespace nx;
+
+// ------------------------------------------------------- mini framework
+static int g_pass = 0, g_fail = 0;
+static std::string g_current;
+#define CHECK(cond)                                                                              \
+    do {                                                                                         \
+        if (cond) ++g_pass;                                                                      \
+        else { ++g_fail; std::printf("  FALHOU [%s] %s:%d: %s\n", g_current.c_str(), __FILE__, __LINE__, #cond); } \
+    } while (0)
+
+static void section(const char* name) {
+    g_current = name;
+    std::printf("== %s\n", name);
+}
+
+static std::string g_out = "test_output/";
+
+// ------------------------------------------------------------ helpers
+struct Harness {
+    HeadlessPlatform plat;
+    App app;
+    explicit Harness(const std::string& dataDir, int w = 1280, int h = 720) : plat(w, h, dataDir), app(plat) {}
+    void step(uint32_t buttons = 0, int frames = 1, float dt = 1.0f / 60.0f) {
+        for (int i = 0; i < frames; ++i) {
+            RawPadState s;
+            s.connected = true;
+            s.buttons = buttons;
+            plat.setInput(s);
+            plat.advance(dt);
+            app.frame(s, dt);
+        }
+    }
+    // Pressiona e solta um botao.
+    void tap(Button b) {
+        step(bit(b), 1);
+        step(0, 1);
+    }
+    void idle(float seconds) { step(0, int(seconds * 60)); }
+    void waitIdle() {
+        for (int i = 0; i < 600 && app.busy(); ++i) step(0, 1);
+        step(0, 2);
+    }
+    void shot(const std::string& name) {
+        SoftRenderer& r = plat.soft();
+        writePng(g_out + name + ".png", r.pixelWidth(), r.pixelHeight(), r.pixels());
+    }
+};
+
+static std::string tempDir(const char* name) {
+    std::string d = g_out + name + "/";
+#ifdef _WIN32
+    std::string cmd = "mkdir \"" + d + "\" >nul 2>nul";
+    for (char& c : cmd) if (c == '/') c = '\\';
+#else
+    std::string cmd = "mkdir -p '" + d + "'";
+#endif
+    std::system(cmd.c_str());
+    std::remove((d + "neutrox.ini").c_str());
+    return d;
+}
+
+static double nowMs() {
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+
+// ================================================================ testes
+
+static void testFont() {
+    section("Fonte propria");
+    StrokeFont& f = StrokeFont::instance();
+    for (char c = 32; c < 127; ++c) {
+        if (c == '^' || c == '`' || c == '{' || c == '}' || c == '~') continue;  // nao usados na interface
+        if (!f.hasGlyph(uint32_t(c))) std::printf("  sem glifo: '%c'\n", c);
+        CHECK(f.hasGlyph(uint32_t(c)));
+    }
+    const char* pt = "áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ";
+    const char* p = pt;
+    while (uint32_t cp = utf8Next(p)) CHECK(f.hasGlyph(cp));
+    const GlyphBitmap& g = f.glyph('A', 32, FontWeight::Regular);
+    int ink = 0;
+    for (uint8_t a : g.alpha) ink += a > 128;
+    CHECK(g.w > 0 && g.h > 0 && ink > 20);
+    CHECK(f.advance('W', 32, FontWeight::Regular) > f.advance('i', 32, FontWeight::Regular));
+}
+
+static void testRenderer() {
+    section("Renderizador em software");
+    SoftRenderer r(1280, 720);
+    r.beginFrame();
+    r.clear(Color(10, 20, 30));
+    CHECK(r.pixels()[0] == Color(10, 20, 30).argb());
+    r.fillRect(Rectf{100, 100, 50, 50}, Color(255, 0, 0));
+    CHECK(r.pixels()[120 * 1280 + 120] == Color(255, 0, 0).argb());
+    CHECK(r.pixels()[99 * 1280 + 120] == Color(10, 20, 30).argb());
+    // Alfa global e recorte
+    r.pushClip(Rectf{0, 0, 10, 10});
+    r.fillRect(Rectf{0, 0, 100, 100}, Color(0, 255, 0));
+    r.popClip();
+    CHECK(r.pixels()[5 * 1280 + 5] == Color(0, 255, 0).argb());
+    CHECK(r.pixels()[50 * 1280 + 50] == Color(10, 20, 30).argb());
+    r.pushAlpha(0.5f);
+    r.fillRect(Rectf{200, 200, 10, 10}, Color(255, 255, 255));
+    r.popAlpha();
+    uint32_t mid = r.pixels()[205 * 1280 + 205];
+    int red = int((mid >> 16) & 0xFF);
+    CHECK(red > 120 && red < 140);
+    // Canto arredondado com antialiasing: pixel do canto externo nao pintado.
+    r.fillRoundRect(Rectf{400, 400, 100, 100}, 30, Color(0, 0, 255));
+    CHECK(r.pixels()[401 * 1280 + 401] == Color(10, 20, 30).argb());
+    CHECK(r.pixels()[450 * 1280 + 450] == Color(0, 0, 255).argb());
+    // Poligono convexo
+    Vec2 tri[3] = {{600, 100}, {700, 300}, {500, 300}};
+    r.fillConvex(tri, 3, Color(255, 255, 0));
+    CHECK(r.pixels()[250 * 1280 + 600] == Color(255, 255, 0).argb());
+    // Texturas: criacao, desenho e contabilidade.
+    std::vector<uint32_t> px(64 * 64, 0xFF336699u);
+    TextureId t = r.createTexture(64, 64, px.data());
+    CHECK(r.textureCount() == 1 && r.textureBytes() == 64 * 64 * 4);
+    r.drawTexture(t, Rectf{800, 100, 128, 128});
+    CHECK(r.pixels()[160 * 1280 + 860] == 0xFF336699u);
+    r.destroyTexture(t);
+    CHECK(r.textureCount() == 0 && r.textureBytes() == 0);
+    r.drawTexture(t, Rectf{0, 0, 10, 10});  // id invalido: nao deve travar
+    // Texto
+    TextStyle st;
+    st.size = 32;
+    CHECK(r.measureText("Neutro X", st) > 80);
+    r.drawText("Olá, Neutro X — ação", 50, 600, st);
+    st.rotated90 = true;
+    r.drawText("xbox live", 1200, 300, st);
+
+    // Resolucoes alternativas: 1080p (escala 1.5) e 4:3 (com barras).
+    SoftRenderer hd(1920, 1080);
+    CHECK(std::fabs(hd.scale() - 1.5f) < 1e-4f);
+    hd.beginFrame();
+    hd.fillRect(Rectf{0, 0, 1280, 720}, Color(255, 0, 0));
+    CHECK(hd.pixels()[1079 * 1920 + 1919] == Color(255, 0, 0).argb());
+    SoftRenderer sd(640, 480);
+    sd.beginFrame();
+    sd.clear(Color(255, 255, 255));
+    CHECK(sd.pixels()[0] == 0xFF000000u);                    // barra superior (letterbox)
+    CHECK(sd.pixels()[240 * 640 + 320] == 0xFFFFFFFFu);      // area util
+}
+
+static void testInput() {
+    section("Controle: repeticao, analogico, desconexao");
+    InputMapper m;
+    RawPadState s;
+    s.connected = true;
+    // borda de pressionamento
+    s.buttons = bit(Button::A);
+    InputFrame f = m.update(s, 0.016f);
+    CHECK(f.press(Button::A));
+    f = m.update(s, 0.016f);
+    CHECK(!f.press(Button::A) && f.down(Button::A));  // A nao repete
+    // repeticao do direcional: segurar 1 s
+    s.buttons = bit(Button::Down);
+    int presses = 0;
+    for (int i = 0; i < 60; ++i) presses += m.update(s, 1.0f / 60).press(Button::Down);
+    // 1 (inicial) + repeticoes a partir de 0.42 s a cada 0.11 s => 1 + 6 = 7 (+-1)
+    CHECK(presses >= 6 && presses <= 8);
+    // quadro muito longo nao gera rajada
+    presses = 0;
+    for (int i = 0; i < 2; ++i) presses += m.update(s, 1.0f).press(Button::Down);
+    CHECK(presses <= 2);
+    s.buttons = 0;
+    m.update(s, 0.016f);
+    // analogico com histerese
+    s.ly = 0.6f;
+    CHECK(m.update(s, 0.016f).press(Button::Up));
+    s.ly = 0.45f;  // entre os limiares: continua segurado, sem nova borda
+    f = m.update(s, 0.016f);
+    CHECK(f.down(Button::Up) && !f.press(Button::Up));
+    s.ly = 0.2f;
+    CHECK(!m.update(s, 0.016f).down(Button::Up));
+    // desconexao: sem eventos, sem travar
+    s.buttons = bit(Button::A);
+    s.connected = false;
+    f = m.update(s, 0.016f);
+    CHECK(f.disconnectedNow && !f.press(Button::A));
+    s.connected = true;
+    f = m.update(s, 0.016f);
+    CHECK(f.connectedNow && f.press(Button::A));
+    // reset suprime botoes ainda segurados
+    m.reset();
+    CHECK(!m.update(s, 0.016f).press(Button::A));
+    s.buttons = 0;
+    m.update(s, 0.016f);
+    s.buttons = bit(Button::A);
+    CHECK(m.update(s, 0.016f).press(Button::A));
+}
+
+static void testSettings() {
+    section("Configuracoes: integridade");
+    Settings s;
+    s.defaultDashboard = "metro_v2";
+    s.sfxVolume = 30;
+    s.animations = false;
+    s.animIntensity = AnimIntensity::High;
+    s.accentTheme = 3;
+    s.showFps = true;
+    Settings back;
+    CHECK(parseSettings(serializeSettings(s), back) == LoadResult::Ok);
+    CHECK(back.defaultDashboard == "metro_v2" && back.sfxVolume == 30 && !back.animations &&
+          back.animIntensity == AnimIntensity::High && back.accentTheme == 3 && back.showFps);
+    // Valores invalidos sao rejeitados individualmente.
+    Settings bad;
+    LoadResult lr = parseSettings("sfx_volume=999\ndefault_dashboard=../../etc\nanimations=talvez\naccent_theme=2\nlixo\n", bad);
+    CHECK(lr == LoadResult::Corrupt);
+    CHECK(bad.sfxVolume == 80 && bad.defaultDashboard.empty() && bad.animations && bad.accentTheme == 2);
+    // Arquivo: ausente, escrita atomica e leitura.
+    std::string dir = tempDir("settings");
+    std::string path = dir + "neutrox.ini";
+    Settings tmp;
+    CHECK(loadSettingsFile(path, tmp) == LoadResult::Missing);
+    CHECK(saveSettingsFile(path, s));
+    CHECK(saveSettingsFile(path, s));  // sobrescrever funciona
+    Settings fromFile;
+    CHECK(loadSettingsFile(path, fromFile) == LoadResult::Ok && fromFile.sfxVolume == 30);
+    FILE* fp = std::fopen((path + ".tmp").c_str(), "rb");
+    CHECK(fp == nullptr);  // temporario removido
+    if (fp) std::fclose(fp);
+    // Arquivo binario/corrompido
+    fp = std::fopen(path.c_str(), "wb");
+    const char junk[] = {'\x00', '\x01', 'z', '\xff'};
+    std::fwrite(junk, 1, sizeof(junk), fp);
+    std::fclose(fp);
+    CHECK(loadSettingsFile(path, fromFile) == LoadResult::Corrupt && fromFile.sfxVolume == 80);
+}
+
+static void testAudio() {
+    section("Audio: temas recriados por versao e mixer");
+    for (int t = 0; t < kSoundThemeCount; ++t) {
+        for (int i = 0; i < kSfxCount; ++i) {
+            std::vector<int16_t> pcm = synthesize(SoundTheme(t), Sfx(i));
+            int peak = 0;
+            for (int16_t v : pcm) peak = std::max(peak, std::abs(int(v)));
+            if (pcm.empty() || peak <= 1000) std::printf("  tema %d efeito %d: vazio/baixo (pico %d)\n", t, i, peak);
+            CHECK(!pcm.empty() && peak > 1000 && peak <= 32767);
+        }
+    }
+    // Os temas sao realmente diferentes entre si.
+    CHECK(synthesize(SoundTheme::Blades6717, Sfx::Navigate) != synthesize(SoundTheme::MetroV2_17559, Sfx::Navigate));
+    CHECK(synthesize(SoundTheme::Nxe9199, Sfx::Confirm) != synthesize(SoundTheme::Kinect13604, Sfx::Confirm));
+    Mixer m;
+    m.play(Sfx::Confirm);
+    m.play(Sfx::Navigate);
+    CHECK(m.activeVoices() == 2);
+    std::vector<int16_t> buf(2 * 44100);
+    m.mix(buf.data(), 44100);  // 1 s: todas as vozes terminam
+    CHECK(m.activeVoices() == 0);
+    for (int i = 0; i < 50; ++i) m.play(Sfx::Navigate);
+    CHECK(m.activeVoices() <= 12);  // limite de vozes
+    m.setMasterVolume(0);
+    m.mix(buf.data(), 100);
+    CHECK(buf[0] == 0 && buf[99] == 0);
+}
+
+static void writeBytes(const std::string& path, const std::vector<uint8_t>& b) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (f) { std::fwrite(b.data(), 1, b.size(), f); std::fclose(f); }
+}
+
+static void testOriginalSounds() {
+    section("Sons originais: decodificador WAV e pasta local");
+    // WAV PCM 16 bits mono 44,1 kHz (gerado aqui, sem material proprietario)
+    std::string dir = tempDir("orig");
+    std::vector<int16_t> tone(4410);
+    for (size_t i = 0; i < tone.size(); ++i) tone[i] = int16_t(8000 * std::sin(i * 0.1));
+    CHECK(writeWav(dir + "t.wav", tone));
+    std::vector<uint8_t> bytes;
+    {
+        FILE* f = std::fopen((dir + "t.wav").c_str(), "rb");
+        uint8_t b[4096];
+        size_t n;
+        while (f && (n = std::fread(b, 1, sizeof(b), f)) > 0) bytes.insert(bytes.end(), b, b + n);
+        if (f) std::fclose(f);
+    }
+    std::vector<int16_t> dec;
+    std::string why;
+    CHECK(decodeWav(bytes, dec, why) && dec.size() == tone.size());
+    CHECK(std::abs(dec[100] - tone[100]) <= 2);
+    // XMA e rejeitado com motivo explicito.
+    std::vector<uint8_t> xma = bytes;
+    xma[20] = 0x66; xma[21] = 0x01;  // formato 0x0166 (XMA2)
+    CHECK(!decodeWav(xma, dec, why) && why.find("XMA") != std::string::npos);
+    std::vector<uint8_t> junk = {'n', 'a', 'o', ' ', 'w', 'a', 'v'};
+    CHECK(!decodeWav(junk, dec, why) && !why.empty());
+
+    // Pasta local: Blades com 2 arquivos (um via mapeamento), 1 XMA, resto ausente.
+    std::string base = tempDir("orig/sons_originais");
+    std::string bl = base + "blades_6717/";
+    std::string mk = "mkdir \"" + bl + "\" >nul 2>nul";
+    for (char& c : mk) if (c == '/') c = '\\';
+    std::system(mk.c_str());
+    writeBytes(bl + "navegar.wav", bytes);
+    writeBytes(bl + "som_ok.wav", bytes);
+    writeBytes(bl + "voltar.wav", xma);
+    writeBytes(bl + "mapeamento.ini", std::vector<uint8_t>{'c','o','n','f','i','r','m','a','r','=','s','o','m','_','o','k','.','w','a','v','\n'});
+    Mixer m;
+    m.loadOriginals(base);
+    OrigReport rep = m.originalsReport();
+    CHECK(rep.loaded(SoundTheme::Blades6717) == 2);
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Navigate)].status == OrigStatus::Loaded);
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Confirm)].status == OrigStatus::Loaded);
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Back)].status == OrigStatus::Unsupported);
+    CHECK(rep.e[int(SoundTheme::Blades6717)][int(Sfx::Error)].status == OrigStatus::Missing);
+    CHECK(rep.loaded(SoundTheme::Nxe9199) == 0);
+    // Fonte "Originais": som ausente fica mudo (sem substituicao automatica).
+    m.setSource(SoundSource::Originals);
+    m.setTheme(SoundTheme::Blades6717);
+    m.play(Sfx::Error);
+    CHECK(m.activeVoices() == 0);
+    m.play(Sfx::Navigate);
+    CHECK(m.activeVoices() == 1);
+    m.setTheme(SoundTheme::Nxe9199);
+    m.play(Sfx::Confirm);
+    CHECK(m.activeVoices() == 1);
+    // Fonte "Recriados" so quando escolhida explicitamente.
+    m.setSource(SoundSource::Recreated);
+    m.play(Sfx::Confirm);
+    CHECK(m.activeVoices() == 2);
+    // Tema do Neutro X sempre toca (identidade propria do aplicativo).
+    m.setSource(SoundSource::Originals);
+    m.setTheme(SoundTheme::NeutroX);
+    m.play(Sfx::Confirm);
+    CHECK(m.activeVoices() == 3);
+    // Recarregar com voz ativa nao deixa ponteiros pendentes.
+    m.loadOriginals(base);
+    std::vector<int16_t> buf(2 * 1000);
+    m.mix(buf.data(), 1000);
+    CHECK(m.activeVoices() == 0);
+
+    section("Troca automatica do tema sonoro com o dashboard");
+    Harness h(tempDir("theme"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    CHECK(h.plat.mixer().theme() == SoundTheme::NeutroX);
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h.app.openDashboard(DashboardId(d));
+        h.waitIdle();
+        CHECK(h.plat.mixer().theme() == soundThemeFor(DashboardId(d)));
+    }
+    h.tap(Button::Start);  // menu do Neutro X por cima: sons do Neutro X
+    h.step(0, 2);
+    CHECK(h.plat.mixer().theme() == SoundTheme::NeutroX);
+    h.tap(Button::B);
+    h.step(0, 2);
+    CHECK(h.plat.mixer().theme() == SoundTheme::MetroV2_17559);
+    // Pastas por versao foram preparadas na pasta de dados (fora do repositorio).
+    FILE* g = std::fopen((h.plat.dataPath() + "sons_originais/LEIA-ME.txt").c_str(), "rb");
+    CHECK(g != nullptr);
+    if (g) std::fclose(g);
+    h.app.openMainMenu();
+    h.waitIdle();
+    h.app.openSettings();
+    h.waitIdle();
+    for (int i = 0; i < 3; ++i) h.tap(Button::Down);
+    h.tap(Button::A);  // "Sons originais: estado"
+    h.waitIdle();
+    h.idle(0.5f);
+    CHECK(std::string(h.app.topScreenName()) == "SoundStatus");
+    h.shot("15_sons_originais_estado");
+    h.app.shutdown();
+}
+
+static void testAppFlow() {
+    section("Aplicativo: inicializacao, menu e cinco interfaces");
+    Harness h(tempDir("app_flow"));
+    CHECK(h.app.init());
+    h.step(0, 2);
+    CHECK(std::string(h.app.topScreenName()) == "Boot");
+    h.shot("01_abertura");
+    h.idle(3.0f);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+    h.idle(1.0f);
+    h.shot("02_menu_principal");
+
+    // Seleciona cada dashboard pelo menu e verifica carga + navegacao.
+    const char* shots[] = {"03_blades", "04_nxe", "05_kinect", "06_metro_v1", "07_metro_v2"};
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h.app.openMainMenu();
+        h.waitIdle();
+        CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+        for (int k = 0; k < d; ++k) h.tap(Button::Down);
+        h.idle(0.4f);
+        if (d == 2) h.shot("02b_menu_selecao_kinect");
+        h.tap(Button::A);
+        h.waitIdle();
+        CHECK(h.app.hasActiveDashboard() && int(h.app.activeDashboard()) == d);
+        CHECK(std::string(h.app.topScreenName()) == dashboardInfo(DashboardId(d)).name);
+        // navegacao entre secoes
+        h.tap(Button::RB);
+        h.tap(Button::RB);
+        h.tap(Button::LB);
+        h.idle(0.6f);
+        h.shot(shots[d]);
+    }
+
+    section("Menu global (START) e troca sem reiniciar");
+    h.tap(Button::Start);
+    h.idle(0.4f);
+    CHECK(std::string(h.app.topScreenName()) == "GlobalMenu");
+    h.shot("08_menu_global");
+    h.tap(Button::Down);  // "Trocar de dashboard"
+    h.tap(Button::A);
+    h.idle(0.3f);
+    h.shot("09_menu_trocar");
+    // vai para Blades (indice 0) a partir de Metro V2 (indice 4)
+    for (int i = 0; i < 4; ++i) h.tap(Button::Up);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(h.app.activeDashboard() == DashboardId::Blades);
+    CHECK(h.app.screenCount() == 1);
+
+    section("Configuracoes pela interface");
+    h.tap(Button::Start);
+    h.idle(0.3f);
+    h.tap(Button::Down);
+    h.tap(Button::Down);  // Configuracoes
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::Right);  // dashboard padrao: Blades
+    h.tap(Button::Down);
+    h.tap(Button::Left);   // volume 70
+    for (int i = 0; i < 5; ++i) h.tap(Button::Down);  // sons, estado, animacoes, intensidade, tema
+    h.tap(Button::Right);  // tema de cores -> 1
+    h.idle(0.5f);
+    h.shot("10_configuracoes");
+    h.tap(Button::B);      // salva e volta
+    h.waitIdle();
+    CHECK(h.app.activeDashboard() == DashboardId::Blades);
+    Settings saved;
+    CHECK(loadSettingsFile(h.plat.dataPath() + "neutrox.ini", saved) == LoadResult::Ok);
+    CHECK(saved.defaultDashboard == "blades" && saved.sfxVolume == 70 && saved.accentTheme == 1);
+
+    section("Sobre e saida segura");
+    h.app.openMainMenu();
+    h.waitIdle();
+    h.app.openAbout();
+    h.waitIdle();
+    h.idle(0.6f);
+    CHECK(std::string(h.app.topScreenName()) == "About");
+    h.shot("11_sobre");
+    h.tap(Button::B);
+    h.waitIdle();
+    h.tap(Button::B);  // sair -> dialogo
+    h.idle(0.3f);
+    CHECK(std::string(h.app.topScreenName()) == "Dialog");
+    h.shot("12_dialogo_sair");
+    h.tap(Button::A);  // padrao "Nao"
+    h.waitIdle();
+    CHECK(!h.app.quitRequested());
+    h.tap(Button::B);
+    h.idle(0.3f);
+    h.tap(Button::Left);  // "Sim"
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(h.app.quitRequested());
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);  // tudo liberado
+}
+
+static void testSwitchStressAndMemory() {
+    section("Troca repetida de dashboard (100x) e memoria");
+    Harness h(tempDir("stress"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    // Aquecimento: uma volta completa.
+    for (int d = 0; d < kDashboardCount; ++d) { h.app.openDashboard(DashboardId(d)); h.waitIdle(); }
+    h.app.openMainMenu();
+    h.waitIdle();
+    StrokeFont::instance().clearCache();
+    h.step(0, 2);
+    StrokeFont::instance().clearCache();
+    long long baseBytes = g_liveBytes.load();
+    int baseTex = h.plat.renderer().textureCount();
+    size_t baseTexBytes = h.plat.renderer().textureBytes();
+    size_t peakTexBytes = 0;
+    for (int i = 0; i < 100; ++i) {
+        h.app.openDashboard(DashboardId(i % kDashboardCount));
+        h.waitIdle();
+        CHECK(int(h.app.activeDashboard()) == i % kDashboardCount);
+        CHECK(h.app.screenCount() == 1);
+        peakTexBytes = std::max(peakTexBytes, h.plat.renderer().textureBytes());
+    }
+    h.app.openMainMenu();
+    h.waitIdle();
+    StrokeFont::instance().clearCache();
+    h.step(0, 2);
+    StrokeFont::instance().clearCache();
+    long long endBytes = g_liveBytes.load();
+    std::printf("  heap vivo: inicio %.1f KB, fim %.1f KB (dif %+lld bytes)\n", baseBytes / 1024.0, endBytes / 1024.0,
+                endBytes - baseBytes);
+    std::printf("  texturas: base %d (%.1f MB), pico durante trocas %.1f MB\n", baseTex, baseTexBytes / 1048576.0,
+                peakTexBytes / 1048576.0);
+    CHECK(h.plat.renderer().textureCount() == baseTex);
+    CHECK(h.plat.renderer().textureBytes() == baseTexBytes);
+    // So uma interface carregada por vez: pico = base + 1 fundo de 1280x720 (+ folga para o menu).
+    CHECK(peakTexBytes <= baseTexBytes + 2 * 1280 * 720 * 4);
+    CHECK(std::llabs(endBytes - baseBytes) < 64 * 1024);  // sem vazamento significativo
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
+static void testErrorRecovery() {
+    section("Recuperacao de erro ao carregar interface");
+    Harness h(tempDir("error"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    struct FailingDash : Dashboard {
+        FailingDash() : Dashboard(DashboardId::Kinect) {}
+        bool load(Context&, std::string& err) override { err = "recurso de teste ausente"; return false; }
+        void unload(Context&) override {}
+        void update(Context&, const InputFrame&, float) override {}
+        void render(Context&, IRenderer&) override {}
+    };
+    struct ThrowingDash : Dashboard {
+        ThrowingDash() : Dashboard(DashboardId::Nxe) {}
+        bool load(Context&, std::string&) override { throw std::runtime_error("excecao simulada"); }
+        void unload(Context&) override {}
+        void update(Context&, const InputFrame&, float) override {}
+        void render(Context&, IRenderer&) override {}
+    };
+    h.app.setDashboardFactoryForTests([](DashboardId id) -> std::unique_ptr<Dashboard> {
+        if (id == DashboardId::Kinect) return std::unique_ptr<Dashboard>(new FailingDash());
+        if (id == DashboardId::Nxe) return std::unique_ptr<Dashboard>(new ThrowingDash());
+        return dashboardInfo(id).create();
+    });
+    h.app.openDashboard(DashboardId::Kinect);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Error");
+    CHECK(!h.app.hasActiveDashboard());
+    h.shot("13_tela_erro");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+    h.app.openDashboard(DashboardId::Nxe);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Error");
+    h.tap(Button::B);
+    h.waitIdle();
+    // Depois de erros, uma interface valida continua abrindo normalmente.
+    h.app.openDashboard(DashboardId::MetroV1);
+    h.waitIdle();
+    CHECK(h.app.activeDashboard() == DashboardId::MetroV1);
+
+    section("Controle desconectado durante o uso");
+    RawPadState s;
+    s.connected = false;
+    for (int i = 0; i < 120; ++i) { h.plat.advance(1.0 / 60); h.app.frame(s, 1.0f / 60); }
+    CHECK(h.app.activeDashboard() == DashboardId::MetroV1);
+    h.shot("14_controle_desconectado");
+    h.step(0, 30);  // reconecta
+    CHECK(h.app.activeDashboard() == DashboardId::MetroV1);
+    h.app.shutdown();
+}
+
+static void testCorruptSettingsAtStartup() {
+    section("Inicializacao com configuracao corrompida");
+    std::string dir = tempDir("corrupt");
+    FILE* f = std::fopen((dir + "neutrox.ini").c_str(), "wb");
+    std::fputs("default_dashboard=xyz\nsfx_volume=-5\n", f);
+    std::fclose(f);
+    Harness h(dir);
+    CHECK(h.app.init());
+    CHECK(h.app.settings().defaultDashboard.empty() && h.app.settings().sfxVolume == 80);
+    Settings reread;
+    CHECK(loadSettingsFile(dir + "neutrox.ini", reread) == LoadResult::Ok);  // arquivo reparado
+    h.idle(3.0f);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+    h.app.shutdown();
+
+    section("Dashboard padrao abre direto ao iniciar");
+    Settings s;
+    s.defaultDashboard = "metro_v1";
+    saveSettingsFile(dir + "neutrox.ini", s);
+    Harness h2(dir);
+    h2.app.init();
+    h2.idle(3.0f);
+    h2.waitIdle();
+    CHECK(h2.app.activeDashboard() == DashboardId::MetroV1);
+    h2.app.shutdown();
+}
+
+static void testPerformance() {
+    section("Desempenho (tempo de CPU por quadro, renderizador em software)");
+    struct Res { int w, h; };
+    const Res resList[] = {{1280, 720}, {1920, 1080}};
+    for (const Res& res : resList) {
+        Harness h(tempDir("perf"), res.w, res.h);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        auto measure = [&](const char* label) {
+            h.step(0, 10);
+            double t0 = nowMs();
+            const int n = 120;
+            h.step(0, n);
+            double ms = (nowMs() - t0) / n;
+            std::printf("  %4dx%-4d %-22s %6.2f ms/quadro (~%.0f FPS de CPU)\n", res.w, res.h, label, ms, 1000.0 / ms);
+            return ms;
+        };
+        double menu = measure("menu principal");
+        double worst = menu;
+        for (int d = 0; d < kDashboardCount; ++d) {
+            h.app.openDashboard(DashboardId(d));
+            h.waitIdle();
+            worst = std::max(worst, measure(dashboardInfo(DashboardId(d)).name));
+        }
+        if (res.w == 1280) CHECK(worst < 16.7);  // 60 FPS no PC em 720p
+        h.app.shutdown();
+    }
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1) {
+        g_out = argv[1];
+        if (g_out.back() != '/' && g_out.back() != '\\') g_out += '/';
+    }
+    tempDir("");
+    logSetFile(g_out + "tests.log");
+    std::printf("Neutro X %s - testes automatizados\n", kNeutroXVersion);
+    testFont();
+    testRenderer();
+    testInput();
+    testSettings();
+    testAudio();
+    testOriginalSounds();
+    testAppFlow();
+    testSwitchStressAndMemory();
+    testErrorRecovery();
+    testCorruptSettingsAtStartup();
+    testPerformance();
+    std::printf("\nResultado: %d verificacoes aprovadas, %d falharam\n", g_pass, g_fail);
+    logSetFile("");
+    return g_fail == 0 ? 0 : 1;
+}
