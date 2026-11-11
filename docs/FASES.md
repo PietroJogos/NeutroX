@@ -135,3 +135,17 @@ terminar; só então uma versão é marcada como *Latest*.
   Blades, NXE, Kinect e Metro V1 continuam fechados (criptografados).
 - Tela "Sons originais: estado": total de arquivos encontrados, arquivos por versão,
   arquivo real de cada efeito e a causa registrada de cada ausência.
+## Extra (0.7.2) — análise dos cinco XEX e bancos XACT
+- `tools/sound_extract.py` reescrito: relatório técnico por versão (cabeçalho XEX2, bibliotecas
+  de áudio, pacotes), leitura de bancos **XACT3** (`.xwb` + `.xsb`: cue → onda), cenas/skins
+  `.xur` como evidência de função, referências externas (`sharedres://`), validação de cada WAV
+  (canais, taxa, duração contra o banco, silêncio), status confirmado / alternativa /
+  sem evento / não confirmado, `manifesto.ini` por versão e `manifesto.json`.
+- **Correção:** `dash.xwb`/`dash.xsb` estão **dentro** do XEX do Metro V2 (pacote `dashcomm`),
+  não fora. Resultado: **Metro V2 17559 → 52 áudios, 7 de 8 efeitos**, 17 não confirmados,
+  0 erros de conversão (falta "entrada"). As outras quatro versões seguem criptografadas.
+- Neutro X: pasta `local_audio/` (aceita a antiga `sons_originais/`); só o conjunto do
+  dashboard ativo fica na memória e a troca de dashboard descarrega o anterior; a tela de
+  estado mostra não confirmados, erros de conversão, esperados × carregados × ausentes,
+  recursos externos e estado do XEX.
+- Relatório completo: [RELATORIO_AUDIO_XEX.md](RELATORIO_AUDIO_XEX.md).

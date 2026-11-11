@@ -46,12 +46,16 @@ constexpr int kAudioRate = 44100;
 //
 // O Neutro X nao inclui, nao extrai e nao redistribui audio proprietario.
 // Se o usuario tiver os arquivos e permissao para usa-los, basta coloca-los em
-//   <pasta de dados>/sons_originais/<tema>/<efeito>.wav
-// (ex.: sons_originais/blades_6717/navegar.wav). Um arquivo opcional
-// "mapeamento.ini" na pasta do tema permite usar outros nomes
-// (ex.: navegar=meu_arquivo.wav).
+//   <pasta de dados>/local_audio/<tema>/<efeito>.wav
+// (ex.: local_audio/blades_6717/navegar.wav; a pasta antiga sons_originais/
+// ainda e aceita). Um arquivo opcional "mapeamento.ini" na pasta do tema
+// permite usar outros nomes (ex.: navegar=meu_arquivo.wav); "manifesto.ini"
+// (gerado por tools/sound_extract.py) informa quantos audios existem, quantos
+// nao tem funcao confirmada e quantos falharam na conversao.
 // Com a fonte "Originais" selecionada, um som original ausente NAO e
 // substituido por recriacao: o efeito fica mudo e o motivo e informado.
+// Somente o conjunto do dashboard ativo fica na memoria: ao trocar de
+// dashboard o conjunto anterior e descarregado e o novo e carregado.
 // ------------------------------------------------------------------------
 enum class SoundSource : int { Originals = 0, Recreated = 1 };
 
@@ -70,6 +74,13 @@ struct OrigReport {
     // Total de arquivos .wav originais presentes na pasta da versao (inclui os
     // que nao tem funcao identificada), p.ex. instalados por tools/sound_extract.py.
     int filesInFolder[kSoundThemeCount] = {};
+    // Dados do manifesto.ini da versao (-1 = sem manifesto).
+    int manifestFiles[kSoundThemeCount] = {-1, -1, -1, -1, -1, -1};
+    int unconfirmed[kSoundThemeCount] = {-1, -1, -1, -1, -1, -1};
+    int convErrors[kSoundThemeCount] = {-1, -1, -1, -1, -1, -1};
+    int externalRefs[kSoundThemeCount] = {-1, -1, -1, -1, -1, -1};
+    std::string situation[kSoundThemeCount];  // ex.: "parcial: 7 de 8 efeitos confirmados"
+    std::string xexState[kSoundThemeCount];   // aberto / criptografado / falha
     int loaded(SoundTheme t) const;
     int totalLoaded() const;
 };
@@ -85,8 +96,13 @@ public:
     SoundTheme theme();
     void setSource(SoundSource s);
     SoundSource source();
-    // (Re)carrega sons originais da pasta (termina com separador). Thread-safe.
+    // (Re)verifica a pasta de sons originais (termina com separador): valida
+    // todas as versoes para o relatorio, mas so mantem na memoria o conjunto
+    // do tema ativo. Thread-safe.
     void loadOriginals(const std::string& baseDir);
+    // Tema cujos sons originais estao na memoria (-1 = nenhum).
+    int residentOriginals();
+    size_t originalBytes();
     OrigReport originalsReport();
     void play(Sfx s, float volume = 1.0f, float pitch = 1.0f);                // tema atual
     void playThemed(SoundTheme t, Sfx s, float volume = 1.0f, float pitch = 1.0f);
@@ -107,8 +123,13 @@ private:
         float gain = 1;
     };
     std::vector<std::vector<int16_t>> bank_;  // recriados [tema * kSfxCount + sfx]
-    std::vector<std::vector<int16_t>> orig_;  // originais (vazio = ausente)
+    std::vector<std::vector<int16_t>> orig_;  // originais do tema residente [sfx] (vazio = ausente)
+    int origResident_ = -1;
+    std::string origBase_;
     OrigReport report_;
+    // Le e decodifica os efeitos de um tema (fora do mutex).
+    static void readTheme(const std::string& baseDir, int t, OrigReport& rep, std::vector<std::vector<int16_t>>* keep);
+    void makeResident(int t);
     std::vector<Voice> voices_;
     std::mutex mtx_;
     float master_ = 0.8f;

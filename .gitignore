@@ -12,6 +12,9 @@ out/
 *.xzp
 *.xma
 sons_originais/
+local_audio/
+*.xwb
+*.xsb
 referencias/
 NeutroX_Pacote_*/
 *.zip
@@ -22,3 +25,6 @@ neutrox.log
 captura_*.png
 
 dist/
+
+# Python
+__pycache__/

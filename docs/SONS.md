@@ -5,7 +5,7 @@
 | Conjunto | Onde fica | Vai para o GitHub? |
 |---|---|---|
 | **Sons do Neutro X** (menu, configurações, transições) | Gerados por código (`src/audio/themes/neutrox.cpp`) | Sim (são originais do projeto) |
-| **Sons originais dos dashboards** (seus arquivos) | `<pasta de dados>/sons_originais/<versão>/` | **Nunca** (`.gitignore`) |
+| **Sons originais dos dashboards** (seus arquivos) | `<pasta de dados>/local_audio/<versão>/` | **Nunca** (`.gitignore`) |
 | **Sons recriados por versão** (alternativa opcional) | Gerados por código (`src/audio/themes/<versão>.cpp`); exportáveis em WAV | Sim (são originais do projeto) |
 
 A fonte usada nos dashboards é escolhida em **Configurações → Sons dos dashboards**:
@@ -20,13 +20,17 @@ O tema muda sozinho com a tela: dashboard ativo → sons daquela versão; menus 
 
 ## Pasta dos sons originais
 
-Windows (prévia): `%LOCALAPPDATA%\NeutroX\sons_originais\`
-Console (Fase 10): dentro da pasta do próprio aplicativo.
+Windows (prévia): `%LOCALAPPDATA%\NeutroX\local_audio\`
+Console (Fase 10): `local_audio/` dentro da pasta do próprio aplicativo.
+A pasta antiga `sons_originais/` continua aceita quando é a única existente.
+
+Só o conjunto do dashboard ativo fica na memória: ao trocar de dashboard o anterior é
+descarregado e o novo é carregado (nos menus do Neutro X o conjunto atual é mantido).
 
 O Neutro X cria a estrutura e um `LEIA-ME.txt` na primeira execução:
 
 ```text
-sons_originais/
+local_audio/
 ├── blades_6717/
 ├── nxe_9199/
 ├── kinect_13604/
@@ -58,86 +62,79 @@ Formatos aceitos: WAV PCM 8/16/24 bits ou float 32, mono ou estéreo, qualquer t
 (convertido para 44,1 kHz mono), até 12 s e 16 MB. **XMA/XMA2 não é suportado** (codec
 proprietário do console) — converta para WAV PCM antes.
 
-Em **Configurações → Sons originais: estado** você vê cada versão e cada efeito, com o
-motivo exato de cada falha (arquivo não encontrado, XMA, formato inválido, longo demais…),
-pode testar os efeitos (A) e verificar a pasta de novo (Y) sem reiniciar.
+Em **Configurações → Sons originais: estado** você vê cada versão (arquivos encontrados, não
+confirmados, erros de conversão, esperados × carregados × ausentes, recursos externos, estado
+do XEX) e cada efeito, com o arquivo real ou o motivo exato de cada falha (arquivo não
+encontrado, XMA, formato inválido, longo demais…). Pode testar os efeitos (A) e verificar a
+pasta de novo (Y) sem reiniciar. `8/8` só aparece quando os oito arquivos foram realmente
+decodificados.
 
 ## Extração automática (em lote) dos sons originais
 
-O repositório **não contém** nenhum áudio original. A ferramenta abaixo extrai, **na sua
-máquina**, o que for acessível nos XEX que você possui e instala direto na pasta local.
+O repositório **não contém** nenhum áudio original. A ferramenta abaixo inspeciona os XEX que
+você possui e extrai, **na sua máquina**, o que for acessível sem contornar proteções,
+instalando direto na pasta local.
 
 ```bash
 python tools/sound_extract.py --entrada <pasta_com_os_xex>
 ```
 
-Padrão de destino: `%LOCALAPPDATA%\NeutroX\sons_originais`. Precisa do projeto compilado
-(`neutrox_xex_unpack`) e de um FFmpeg com decodificador XMA (o script escolhe sozinho um
-FFmpeg que tenha `xma1`/`xma2`; há wrappers com o mesmo nome no PATH que não têm).
+Destino padrão: `%LOCALAPPDATA%\NeutroX\local_audio`. Precisa do projeto compilado
+(`neutrox_xex_unpack`) e de um FFmpeg com decodificadores `xma1`/`xma2` (o script escolhe
+sozinho; há wrappers com o mesmo nome no PATH que não os têm).
 
-O que a ferramenta faz, para cada XEX:
+Para cada XEX:
 
-1. Identifica a versão pelo Execution ID do cabeçalho (6717, 9199, 13604, 15574, 17559).
-2. **Corpo criptografado → recusa** e registra o motivo: abrir exigiria chaves do console
+1. Lê o cabeçalho XEX2 (texto claro): versão pelo Execution ID, criptografia, compressão,
+   pacotes de recursos, bibliotecas de áudio estáticas e importadas.
+2. **Corpo criptografado → para aqui** e registra o motivo: abrir exigiria chaves do console
    (contornar proteção). Nenhuma chave é usada ou incluída.
-3. Corpo não criptografado → `neutrox_xex_unpack` monta o fluxo LZX e descomprime a imagem
-   (verificada: cabeçalho MZ/PE válido; o resultado é idêntico byte a byte nas versões
-   MSVC e GCC da ferramenta) e grava os 36 pacotes de recursos `XUIZ`.
-4. Lê a tabela de arquivos de cada pacote e extrai os áudios embutidos (RIFF; XMA 44,1 kHz).
-5. Converte para WAV PCM 16 bits **sem alterar taxa nem canais**; o original fica em
-   `sons_originais/brutos/<versão>/`.
-6. Atribui funções **somente pelo nome original do arquivo** (regras abaixo); o que não
-   tem nome correspondente fica na pasta como áudio original sem função.
-7. Grava `mapeamento.ini`, `ausentes.ini` (efeito → causa da ausência) e
-   `relatorio_extracao.txt`. O Neutro X lê tudo sozinho e troca o conjunto inteiro ao trocar
-   de dashboard.
+3. Corpo não criptografado → `neutrox_xex_unpack` descomprime a imagem (LZX) e a ferramenta
+   percorre os pacotes `XUIZ`: bancos **XACT3** (`.xwb` ondas + `.xsb` cues), áudios RIFF
+   soltos, cenas/skins `.xur` que citam sons e referências externas (`sharedres://` = XAM).
+   `.xwb`/`.xsb` soltos ao lado do XEX também são lidos.
+4. Converte com o FFmpeg para WAV PCM 16 bits, **sem alterar taxa nem canais**, e valida
+   canais, taxa, duração (contra a declarada no banco), integridade e silêncio. Falhas viram
+   "erros de conversão" (o arquivo não é instalado). Os originais ficam em `brutos/<versão>/`.
+5. Atribui funções **somente por evidência verificável**: o nome original da cue/arquivo e a
+   skin/cena que o usa. Sem evidência: **não confirmado** (guardado, não usado).
+6. Grava por versão `mapeamento.ini`, `ausentes.ini`, `manifesto.ini` e `relatorio.txt`
+   (relatório técnico), e na raiz `manifesto.json` e `relatorio_extracao.txt`.
 
-Regras de evidência (nome original → efeito):
+Regras de evidência (nome original → efeito; a primeira da lista tem prioridade, e a cue do
+banco XACT do dashboard vence o arquivo solto de mesmo nome):
 
 | Nome original | Efeito | Evidência |
 |---|---|---|
-| `btn_focus` | navegar | foco do botão |
-| `snd_panelright` | navegar | movimento entre painéis (se não houver `btn_focus`) |
-| `btn_select`, `snd_buttonselect` | confirmar | botão selecionar |
-| `btn_back`, `snd_buttonback` | voltar | botão voltar |
-| `tab_switch`, `snd_channelup` | categoria | troca de aba/canal |
-| `snd_panelunfold` | abrir | painel se abrindo |
-| `btn_inactiveselect` | erro | seleção de item inativo |
-| `snd_transitionfrom` | transicao | transição de tela |
+| `btn_Focus` | navegar | foco de botão (estado *Focus* da skin) |
+| `snd_buttonselect`, `btn_Select`, `select_button` | confirmar | seleção de botão (`selectSoundXACT`) |
+| `snd_buttonback`, `btn_Back` | voltar | botão voltar |
+| `tab_switch` | categoria | troca de aba |
+| `snd_panelunfold` | abrir | painel se abrindo (`PanelFoldSounds`) |
+| `btn_InactiveSelect` | erro | seleção de item inativo |
+| `snd_transitionfrom` | transicao | transição de cena (`SceneTransitions`) |
 
 Nenhum efeito recebe som de outra versão e nenhum é preenchido por recriação.
 
 ### Resultado com os arquivos fornecidos (11/11/2026)
 
-| Versão | Arquivos originais | Efeitos com função | Situação |
-|---|---:|---:|---|
-| Blades 6717 | 0 | 0 de 8 | XEX criptografado: não aberto (seria contornar proteção) |
-| NXE 9199 | 0 | 0 de 8 | Idem |
-| Kinect 13604 | 0 | 0 de 8 | Idem |
-| Metro V1 15574 | 0 | 0 de 8 | Idem |
-| **Metro V2 17559** | **16** | **6 de 8** | Extraídos do pacote `controlp` dentro do XEX |
+| Versão | Áudios | Efeitos confirmados | Não confirmados | Erros | Situação |
+|---|---:|---:|---:|---:|---|
+| Blades 6717 | 0 | 0 de 8 | – | – | XEX criptografado: não aberto |
+| NXE 9199 | 0 | 0 de 8 | – | – | Idem |
+| Kinect 13604 | 0 | 0 de 8 | – | – | Idem |
+| Metro V1 15574 | 0 | 0 de 8 | – | – | Idem |
+| **Metro V2 17559** | **52** | **7 de 8** | 17 | 0 | banco `dash.xwb`/`dash.xsb` (dentro do XEX) + 16 áudios do `controlp` |
 
-Metro V2 — os 16 áudios encontrados (todos XMA 44,1 kHz, convertidos e conferidos: sinal
-contínuo, autocorrelação ≈ 1, canais estéreo correlacionados — não é ruído):
+Ausente no Metro V2: **entrada** — nenhuma das 51 cues nem dos áudios soltos tem nome de
+abertura. Detalhes de cada versão, cue por cue: [RELATORIO_AUDIO_XEX.md](RELATORIO_AUDIO_XEX.md).
 
-| Arquivo original | Função atribuída |
-|---|---|
-| `snd_panelright` | **navegar** |
-| `snd_buttonselect` | **confirmar** |
-| `snd_buttonback` | **voltar** |
-| `snd_channelup` | **categoria** |
-| `snd_panelunfold` | **abrir** |
-| `snd_transitionfrom` | **transicao** |
-| `snd_channeldown`, `snd_panelleft`, `snd_panelfold`, `progress_meter` | sem função própria no Neutro X (guardados) |
-| `handles/engage`, `disengage`, `handle_grab_1`, `wave_success`, `snd_pageleft`, `snd_pageright` | sons de gestos do Kinect presentes no 17559 (guardados) |
+> Correção em relação à 0.7.1: o banco `dash.xwb`/`dash.xsb` **não** é externo — ele está no
+> pacote `dashcomm` dentro do XEX. Com a leitura de XACT, `navegar`, `categoria` e `erro`
+> passaram a vir do próprio banco do dashboard.
 
-Ausentes no Metro V2: **erro** e **entrada**. O XEX não tem áudio com esses nomes; ele
-**referencia** um banco de sons externo, `dash.xwb`/`dash.xsb` (onde ficam `btn_Focus`,
-`btn_Select`, `btn_Back`, `btn_InactiveSelect`, `tab_Switch`), que **não faz parte** dos
-arquivos fornecidos. Se você tiver esse banco, coloque-o na mesma pasta do XEX: a ferramenta
-o detecta e registra, mas a leitura de bancos XACT ainda não está implementada.
-
-Qualquer áudio original fica só na sua pasta local; `sons_originais/` está no `.gitignore`.
+Qualquer áudio original fica só na sua pasta local; `local_audio/` e `sons_originais/` estão
+no `.gitignore`.
 
 ## Exportar os sons recriados em WAV
 

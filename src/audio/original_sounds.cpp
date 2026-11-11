@@ -52,6 +52,34 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
+// Percorre linhas "chave=valor" (ignora vazias, comentarios '#' e secoes '[...]').
+template <class F>
+void forEachIni(const std::vector<uint8_t>& bytes, F fn) {
+    std::string text(bytes.begin(), bytes.end());
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos);
+        std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
+        pos = nl == std::string::npos ? text.size() : nl + 1;
+        if (line.empty() || line[0] == '#' || line[0] == '[') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        fn(trim(line.substr(0, eq)), trim(line.substr(eq + 1)));
+    }
+}
+
+int toInt(const std::string& v) {
+    if (v.empty() || v.size() > 9) return -1;
+    int n = 0;
+    for (char c : v) {
+        if (c < '0' || c > '9') return -1;
+        n = n * 10 + (c - '0');
+    }
+    return n;
+}
+
+static_assert(kSoundThemeCount == 6, "atualize os valores iniciais de OrigReport");
+
 }  // namespace
 
 bool decodeWav(const std::vector<uint8_t>& d, std::vector<int16_t>& out, std::string& reason) {
@@ -154,97 +182,135 @@ OrigReport Mixer::originalsReport() {
     return report_;
 }
 
+int Mixer::residentOriginals() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return origResident_;
+}
+
+size_t Mixer::originalBytes() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    size_t n = 0;
+    for (const auto& v : orig_) n += v.size() * sizeof(int16_t);
+    return n;
+}
+
+void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::vector<std::vector<int16_t>>* keep) {
+    const SoundThemeInfo& ti = soundThemeInfo(SoundTheme(t));
+    const std::string dir = baseDir + ti.folder + "/";
+    // mapeamento opcional: efeito=arquivo
+    std::string names[kSfxCount];
+    for (int s = 0; s < kSfxCount; ++s) names[s] = std::string(sfxFileName(Sfx(s))) + ".wav";
+    std::vector<uint8_t> bytes;
+    if (readFile(dir + "mapeamento.ini", bytes, 64 * 1024))
+        forEachIni(bytes, [&](const std::string& k, const std::string& v) {
+            if (v.empty() || v.find("..") != std::string::npos) return;  // so arquivos dentro da pasta
+            for (int s = 0; s < kSfxCount; ++s)
+                if (k == sfxFileName(Sfx(s))) names[s] = v;
+        });
+    // ausentes.ini (opcional, gerado pelo extrator): efeito=causa da ausencia
+    std::string causes[kSfxCount];
+    if (readFile(dir + "ausentes.ini", bytes, 64 * 1024))
+        forEachIni(bytes, [&](const std::string& k, const std::string& v) {
+            for (int s = 0; s < kSfxCount; ++s)
+                if (k == sfxFileName(Sfx(s))) causes[s] = v;
+        });
+    // manifesto.ini (opcional, gerado pelo extrator): contagens reais da extracao
+    rep.manifestFiles[t] = rep.unconfirmed[t] = rep.convErrors[t] = rep.externalRefs[t] = -1;
+    rep.situation[t].clear();
+    rep.xexState[t].clear();
+    if (readFile(dir + "manifesto.ini", bytes, 256 * 1024))
+        forEachIni(bytes, [&](const std::string& k, const std::string& v) {
+            if (k == "audios_originais") rep.manifestFiles[t] = toInt(v);
+            else if (k == "nao_confirmados") rep.unconfirmed[t] = toInt(v);
+            else if (k == "erros_conversao") rep.convErrors[t] = toInt(v);
+            else if (k == "recursos_externos") rep.externalRefs[t] = toInt(v);
+            else if (k == "situacao") rep.situation[t] = v.substr(0, 120);
+            else if (k == "xex_estado") rep.xexState[t] = v.substr(0, 40);
+        });
+    // conta todos os .wav da pasta (originais instalados, com ou sem funcao)
+    rep.filesInFolder[t] = 0;
+    try {
+        std::filesystem::path p = std::filesystem::u8path(dir);
+        if (std::filesystem::is_directory(p))
+            for (const auto& de : std::filesystem::directory_iterator(p)) {
+                std::string ext = de.path().extension().u8string();
+                for (char& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                if (de.is_regular_file() && ext == ".wav") rep.filesInFolder[t]++;
+            }
+    } catch (const std::exception&) {
+    }
+    for (int s = 0; s < kSfxCount; ++s) {
+        OrigEntry& en = rep.e[t][s];
+        en = OrigEntry();
+        en.file = dir + names[s];
+        if (!readFile(en.file, bytes, 16u * 1024u * 1024u)) {
+            en.status = OrigStatus::Missing;
+            en.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
+            continue;
+        }
+        if (bytes.size() > 16u * 1024u * 1024u) {
+            en.status = OrigStatus::Invalid;
+            en.reason = "arquivo grande demais (máximo 16 MB)";
+            continue;
+        }
+        std::vector<int16_t> pcm;
+        std::string why;
+        if (!decodeWav(bytes, pcm, why)) {
+            en.status = why.find("XMA") != std::string::npos || why.find("suportado") != std::string::npos
+                            ? OrigStatus::Unsupported : OrigStatus::Invalid;
+            en.reason = why;
+            continue;
+        }
+        en.status = OrigStatus::Loaded;
+        en.seconds = float(pcm.size()) / kAudioRate;
+        if (keep) (*keep)[size_t(s)] = std::move(pcm);
+    }
+}
+
 void Mixer::loadOriginals(const std::string& baseDir) {
     OrigReport rep;
     rep.baseDir = baseDir;
-    std::vector<std::vector<int16_t>> loaded(bank_.size());
-    for (int t = 1; t < kSoundThemeCount; ++t) {  // tema 0 (Neutro X) e sempre proprio
-        const SoundThemeInfo& ti = soundThemeInfo(SoundTheme(t));
-        std::string dir = baseDir + ti.folder + "/";
-        // mapeamento opcional: efeito=arquivo
-        std::string names[kSfxCount];
-        for (int s = 0; s < kSfxCount; ++s) names[s] = std::string(sfxFileName(Sfx(s))) + ".wav";
-        std::vector<uint8_t> map;
-        if (readFile(dir + "mapeamento.ini", map, 64 * 1024)) {
-            std::string text(map.begin(), map.end());
-            size_t pos = 0;
-            while (pos < text.size()) {
-                size_t nl = text.find('\n', pos);
-                std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
-                pos = nl == std::string::npos ? text.size() : nl + 1;
-                if (line.empty() || line[0] == '#') continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos) continue;
-                std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
-                if (v.empty() || v.find("..") != std::string::npos) continue;  // so arquivos dentro da pasta
-                for (int s = 0; s < kSfxCount; ++s)
-                    if (k == sfxFileName(Sfx(s))) names[s] = v;
-            }
-        }
-        // ausentes.ini (opcional, gerado pelo extrator): efeito=causa da ausencia
-        std::string causes[kSfxCount];
-        std::vector<uint8_t> aus;
-        if (readFile(dir + "ausentes.ini", aus, 64 * 1024)) {
-            std::string text(aus.begin(), aus.end());
-            size_t pos = 0;
-            while (pos < text.size()) {
-                size_t nl = text.find('\n', pos);
-                std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
-                pos = nl == std::string::npos ? text.size() : nl + 1;
-                if (line.empty() || line[0] == '#') continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos) continue;
-                std::string k = trim(line.substr(0, eq));
-                for (int s = 0; s < kSfxCount; ++s)
-                    if (k == sfxFileName(Sfx(s))) causes[s] = trim(line.substr(eq + 1));
-            }
-        }
-        // conta todos os .wav da pasta (originais instalados, com ou sem funcao)
-        try {
-            std::filesystem::path p = std::filesystem::u8path(dir);
-            if (std::filesystem::is_directory(p))
-                for (const auto& de : std::filesystem::directory_iterator(p)) {
-                    std::string ext = de.path().extension().u8string();
-                    for (char& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-                    if (de.is_regular_file() && ext == ".wav") rep.filesInFolder[t]++;
-                }
-        } catch (const std::exception&) {
-        }
-        for (int s = 0; s < kSfxCount; ++s) {
-            OrigEntry& en = rep.e[t][s];
-            en.file = dir + names[s];
-            std::vector<uint8_t> bytes;
-            if (!readFile(en.file, bytes, 16u * 1024u * 1024u)) {
-                en.status = OrigStatus::Missing;
-                en.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
-                continue;
-            }
-            if (bytes.size() > 16u * 1024u * 1024u) {
-                en.status = OrigStatus::Invalid;
-                en.reason = "arquivo grande demais (máximo 16 MB)";
-                continue;
-            }
-            std::vector<int16_t> pcm;
-            std::string why;
-            if (!decodeWav(bytes, pcm, why)) {
-                en.status = why.find("XMA") != std::string::npos || why.find("suportado") != std::string::npos
-                                ? OrigStatus::Unsupported : OrigStatus::Invalid;
-                en.reason = why;
-                continue;
-            }
-            en.status = OrigStatus::Loaded;
-            en.seconds = float(pcm.size()) / kAudioRate;
-            loaded[size_t(t * kSfxCount + s)] = std::move(pcm);
-        }
+    int want;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        want = theme_ != SoundTheme::NeutroX ? int(theme_) : origResident_;
     }
+    std::vector<std::vector<int16_t>> keep(kSfxCount);
+    // Valida todas as versoes (relatorio), mas so guarda o PCM do tema ativo.
+    for (int t = 1; t < kSoundThemeCount; ++t) readTheme(baseDir, t, rep, t == want ? &keep : nullptr);
     for (int s = 0; s < kSfxCount; ++s) {
         rep.e[0][s].status = OrigStatus::Missing;
         rep.e[0][s].reason = "tema próprio do Neutro X (não se aplica)";
     }
     std::lock_guard<std::mutex> lock(mtx_);
-    voices_.clear();  // nenhuma voz pode apontar para o banco antigo
-    orig_.swap(loaded);
+    voices_.clear();  // nenhuma voz pode apontar para o conjunto antigo
+    orig_.swap(keep);
+    origResident_ = want > 0 ? want : -1;
+    origBase_ = baseDir;
     report_ = rep;
+}
+
+void Mixer::makeResident(int t) {
+    std::string base;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        base = origBase_;
+    }
+    OrigReport tmp;
+    std::vector<std::vector<int16_t>> pcm(kSfxCount);
+    readTheme(base, t, tmp, &pcm);
+    std::lock_guard<std::mutex> lock(mtx_);
+    // Descarrega o conjunto anterior: vozes que tocam um original saem antes da troca.
+    voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
+                                 [&](const Voice& v) {
+                                     for (const auto& o : orig_)
+                                         if (v.data == &o) return true;
+                                     return false;
+                                 }),
+                  voices_.end());
+    orig_.swap(pcm);
+    origResident_ = t;
+    for (int s = 0; s < kSfxCount; ++s) report_.e[t][s] = tmp.e[t][s];
 }
 
 }  // namespace nx

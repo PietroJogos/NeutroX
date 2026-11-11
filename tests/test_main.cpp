@@ -357,6 +357,7 @@ static void testOriginalSounds() {
     writeBytes(bl + "extra_original.wav", bytes);  // original sem funcao identificada
     const char aus[] = "# gerado pelo extrator\nerro=causa registrada pelo extrator\n";
     writeBytes(bl + "ausentes.ini", std::vector<uint8_t>(aus, aus + sizeof(aus) - 1));
+    std::remove((bl + "manifesto.ini").c_str());  // de uma execucao anterior na mesma pasta
     Mixer m;
     m.loadOriginals(base);
     OrigReport rep = m.originalsReport();
@@ -377,23 +378,62 @@ static void testOriginalSounds() {
     CHECK(m.activeVoices() == 0);
     m.play(Sfx::Navigate);
     CHECK(m.activeVoices() == 1);
+    CHECK(m.residentOriginals() == int(SoundTheme::Blades6717));
+    CHECK(m.originalBytes() > 0);
+    // Trocar de dashboard descarrega o conjunto anterior (a voz do Blades sai) e carrega o novo.
     m.setTheme(SoundTheme::Nxe9199);
+    CHECK(m.residentOriginals() == int(SoundTheme::Nxe9199));
+    CHECK(m.activeVoices() == 0);
+    CHECK(m.originalBytes() == 0);  // NXE sem arquivos: nada na memoria
     m.play(Sfx::Confirm);
-    CHECK(m.activeVoices() == 1);
+    CHECK(m.activeVoices() == 0);
+    // Outra versao nao toca o conjunto que nao esta carregado.
+    m.playThemed(SoundTheme::Blades6717, Sfx::Navigate);
+    CHECK(m.activeVoices() == 0);
     // Fonte "Recriados" so quando escolhida explicitamente.
     m.setSource(SoundSource::Recreated);
     m.play(Sfx::Confirm);
-    CHECK(m.activeVoices() == 2);
-    // Tema do Neutro X sempre toca (identidade propria do aplicativo).
+    CHECK(m.activeVoices() == 1);
+    // Tema do Neutro X sempre toca (identidade propria do aplicativo) e mantem o conjunto residente.
     m.setSource(SoundSource::Originals);
     m.setTheme(SoundTheme::NeutroX);
     m.play(Sfx::Confirm);
+    CHECK(m.activeVoices() == 2);
+    CHECK(m.residentOriginals() == int(SoundTheme::Nxe9199));
+    m.setTheme(SoundTheme::Blades6717);
+    CHECK(m.residentOriginals() == int(SoundTheme::Blades6717));
+    m.play(Sfx::Navigate);
     CHECK(m.activeVoices() == 3);
     // Recarregar com voz ativa nao deixa ponteiros pendentes.
     m.loadOriginals(base);
     std::vector<int16_t> buf(2 * 1000);
     m.mix(buf.data(), 1000);
     CHECK(m.activeVoices() == 0);
+    CHECK(m.residentOriginals() == int(SoundTheme::Blades6717));  // recarga mantem o tema ativo
+
+    section("Manifesto da extracao (manifesto.ini)");
+    {
+        CHECK(rep.manifestFiles[int(SoundTheme::Blades6717)] == -1);  // sem manifesto: desconhecido
+        CHECK(rep.situation[int(SoundTheme::Blades6717)].empty());
+        const char man[] = "# Gerado por tools/sound_extract.py\ndashboard=Blades\nxex_estado=aberto\naudios_originais=4\n"
+                           "efeitos_esperados=8\nnao_confirmados=1\nerros_conversao=2\nrecursos_externos=3\n"
+                           "situacao=parcial: 2 de 8 efeitos confirmados\n"
+                           "arquivo.extra_original.wav=nao_confirmado|-|pacote/extra|XMA2 1ch|1|44100|0.5|00\n"
+                           "nao_confirmados=x9\n";  // valor invalido posterior nao vira numero
+        writeBytes(bl + "manifesto.ini", std::vector<uint8_t>(man, man + sizeof(man) - 1));
+        m.loadOriginals(base);
+        OrigReport r2 = m.originalsReport();
+        const int b = int(SoundTheme::Blades6717);
+        CHECK(r2.manifestFiles[b] == 4);
+        CHECK(r2.unconfirmed[b] == -1);
+        CHECK(r2.convErrors[b] == 2);
+        CHECK(r2.externalRefs[b] == 3);
+        CHECK(r2.situation[b] == "parcial: 2 de 8 efeitos confirmados");
+        CHECK(r2.xexState[b] == "aberto");
+        CHECK(r2.unconfirmed[int(SoundTheme::Nxe9199)] == -1);
+        // O manifesto nao altera a contagem real: so arquivos validos contam como carregados.
+        CHECK(r2.loaded(SoundTheme::Blades6717) == 2);
+    }
 
     section("Troca automatica do tema sonoro com o dashboard");
     Harness h(tempDir("theme"));
@@ -413,7 +453,7 @@ static void testOriginalSounds() {
     h.step(0, 2);
     CHECK(h.plat.mixer().theme() == SoundTheme::MetroV2_17559);
     // Pastas por versao foram preparadas na pasta de dados (fora do repositorio).
-    FILE* g = std::fopen((h.plat.dataPath() + "sons_originais/LEIA-ME.txt").c_str(), "rb");
+    FILE* g = std::fopen((h.plat.dataPath() + "local_audio/LEIA-ME.txt").c_str(), "rb");
     CHECK(g != nullptr);
     if (g) std::fclose(g);
     h.app.openMainMenu();
@@ -427,6 +467,17 @@ static void testOriginalSounds() {
     CHECK(std::string(h.app.topScreenName()) == "SoundStatus");
     h.shot("15_sons_originais_estado");
     h.app.shutdown();
+
+    section("Pasta antiga sons_originais/ continua aceita");
+    {
+        std::string d = tempDir("legado");
+        tempDir("legado/sons_originais");
+        Harness hl(d);
+        CHECK(hl.app.originalSoundsDir() == d + "sons_originais/");
+        std::string d2 = tempDir("novo");
+        Harness hn(d2);
+        CHECK(hn.app.originalSoundsDir() == d2 + "local_audio/");
+    }
 }
 
 static void testAppFlow() {
@@ -1388,7 +1439,7 @@ static void testMemoryReport() {
 
 // Opcional: valida sons originais REAIS instalados pelo extrator. So roda se a
 // variavel NEUTROX_DADOS_REAIS apontar para a pasta de dados que contem
-// sons_originais/ (material proprietario nunca entra no repositorio).
+// local_audio/ (material proprietario nunca entra no repositorio).
 static void testRealOriginals() {
     const char* real = std::getenv("NEUTROX_DADOS_REAIS");
     if (!real || !*real) return;
@@ -1399,8 +1450,9 @@ static void testRealOriginals() {
     h.app.init();
     OrigReport rep = h.plat.mixer().originalsReport();
     for (int t = 1; t < kSoundThemeCount; ++t)
-        std::printf("  %-16s %d de %d efeitos com funcao, %d arquivos na pasta\n", soundThemeInfo(SoundTheme(t)).folder,
-                    rep.loaded(SoundTheme(t)), kSfxCount, rep.filesInFolder[t]);
+        std::printf("  %-16s %d de %d efeitos com funcao, %d arquivos na pasta, %d nao confirmados, %d erros (%s)\n",
+                    soundThemeInfo(SoundTheme(t)).folder, rep.loaded(SoundTheme(t)), kSfxCount, rep.filesInFolder[t],
+                    rep.unconfirmed[t], rep.convErrors[t], rep.situation[t].c_str());
     int total = 0;
     for (int t = 1; t < kSoundThemeCount; ++t) total += rep.filesInFolder[t];
     CHECK(total > 0);
@@ -1416,6 +1468,7 @@ static void testRealOriginals() {
         int voices = h.plat.mixer().activeVoices();
         bool hasOrig = rep.e[int(soundThemeFor(DashboardId(d)))][int(Sfx::Confirm)].status == OrigStatus::Loaded;
         CHECK(voices == (hasOrig ? 1 : 0));  // sem original: mudo, sem substituicao
+        CHECK(h.plat.mixer().residentOriginals() == int(soundThemeFor(DashboardId(d))));
     }
     h.app.openMainMenu();
     h.waitIdle();

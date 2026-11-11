@@ -25,10 +25,14 @@
 
 ## Sons
 - Os sons originais **não** acompanham o projeto. A extração automática local
-  (`tools/sound_extract.py`) obtém **16 áudios do Metro V2** (6 dos 8 efeitos); os outros
-  quatro XEX estão criptografados e não são abertos (seria contornar proteção). Veja
-  [SONS.md](SONS.md).
-- Bancos de sons XACT externos (`dash.xwb`/`dash.xsb`) são detectados, mas ainda não lidos.
+  (`tools/sound_extract.py`) obtém **52 áudios do Metro V2** (banco XACT `dash.xwb`/`dash.xsb`
+  + pacote `controlp`), com **7 dos 8 efeitos** confirmados; falta "entrada", que não existe
+  entre os sons do XEX. Os outros quatro XEX estão criptografados e não são abertos (seria
+  contornar proteção). Veja [SONS.md](SONS.md) e [RELATORIO_AUDIO_XEX.md](RELATORIO_AUDIO_XEX.md).
+- Leitura de XACT: só bancos XACT3 (v42–46) não compactos e cues simples; cues complexas e
+  outros eventos são relatados, não usados. Ondas ADPCM/WMA em bancos não são convertidas.
+- Sons com função conhecida mas sem evento no Neutro X (fechar painel, notificação de
+  download…) ficam guardados e não tocam.
 - XMA não é suportado; é preciso converter para WAV PCM.
 - Com a fonte "Originais" (padrão) e a pasta vazia, os dashboards ficam sem efeitos
   sonoros — por decisão de projeto, não há substituição automática.

@@ -577,8 +577,12 @@ public:
             TextStyle vs;
             vs.size = 15;
             vs.color = sel ? Color(235, 240, 245) : Color(150, 160, 172);
-            std::string sub = std::string(soundThemeInfo(th).folder) + "  ·  " + std::to_string(rep_.filesInFolder[int(th)]) +
-                              (rep_.filesInFolder[int(th)] == 1 ? " arquivo" : " arquivos");
+            const int ti = int(th);
+            std::string sub = std::to_string(rep_.filesInFolder[ti]) + (rep_.filesInFolder[ti] == 1 ? " arquivo" : " arquivos");
+            if (rep_.unconfirmed[ti] >= 0) sub += "  ·  " + std::to_string(rep_.unconfirmed[ti]) + " não confirm.";
+            if (rep_.convErrors[ti] >= 0) sub += "  ·  " + std::to_string(rep_.convErrors[ti]) + (rep_.convErrors[ti] == 1 ? " erro" : " erros");
+            if (rep_.unconfirmed[ti] < 0) sub = std::string(soundThemeInfo(th).folder) + "  ·  " + sub;
+            sub = fitText(r, sub, vs, row.w - 90);
             r.drawText(sub.c_str(), 81, row.y + 34, vs);
             TextStyle cs;
             cs.size = 22;
@@ -593,7 +597,7 @@ public:
         SoundTheme th = soundThemeFor(DashboardId(sel_));
         for (int s = 0; s < kSfxCount; ++s) {
             const OrigEntry& e = rep_.e[int(th)][s];
-            float y = panel.y + 16 + s * 58.0f;
+            float y = panel.y + 14 + s * 54.0f;
             Color dot = e.status == OrigStatus::Loaded ? Color(110, 210, 90)
                         : e.status == OrigStatus::Missing ? Color(200, 90, 90) : Color(230, 170, 60);
             r.fillCircle(panel.x + 26, y + 14, 7, dot);
@@ -621,6 +625,23 @@ public:
             }
             det = fitText(r, det, ds, panel.w - 64);
             r.drawText(det.c_str(), panel.x + 44, y + 28, ds);
+        }
+        // Situacao da versao (manifesto.ini gerado pela extracao): esperado x encontrado.
+        {
+            const int ti = int(th);
+            const int n = rep_.loaded(th);
+            std::string sit = "Esperados " + std::to_string(kSfxCount) + "  ·  carregados " + std::to_string(n) + "  ·  ausentes " +
+                              std::to_string(kSfxCount - n);
+            if (rep_.externalRefs[ti] > 0) sit += "  ·  externos " + std::to_string(rep_.externalRefs[ti]);
+            if (rep_.xexState[ti] == "criptografado") sit += "  ·  XEX criptografado: sem acesso";
+            else if (!rep_.xexState[ti].empty()) sit += "  ·  XEX " + rep_.xexState[ti];
+            else sit += "  ·  sem manifesto da extração";
+            TextStyle ss;
+            ss.size = 15;
+            ss.weight = FontWeight::Bold;
+            ss.color = n == kSfxCount ? Color(140, 230, 120) : (n == 0 ? Color(240, 150, 130) : Color(240, 200, 100));
+            sit = fitText(r, sit, ss, panel.w - 40);
+            r.drawText(sit.c_str(), panel.x + 20, panel.bottom() - 30, ss);
         }
         r.fillRect(Rectf{0, 668, 1280, 52}, Color(0, 0, 0, 90));
         drawHints(r, {{Button::A, "Testar efeito"}, {Button::Y, "Verificar pasta de novo"}, {Button::B, "Voltar"}}, 56, 694, 30,

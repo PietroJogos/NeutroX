@@ -114,7 +114,16 @@ void App::applySettings() {
     }
 }
 
-std::string App::originalSoundsDir() const { return platform_.dataPath() + "sons_originais/"; }
+std::string App::originalSoundsDir() const {
+    const std::string base = platform_.dataPath();
+    // Pasta atual: local_audio/. A antiga sons_originais/ continua aceita quando e a unica existente.
+    try {
+        auto isDir = [](const std::string& p) { return std::filesystem::is_directory(std::filesystem::u8path(p)); };
+        if (!isDir(base + "local_audio") && isDir(base + "sons_originais")) return base + "sons_originais/";
+    } catch (const std::exception&) {
+    }
+    return base + "local_audio/";
+}
 
 void App::reloadOriginalSounds() {
     const std::string base = originalSoundsDir();
@@ -134,6 +143,8 @@ void App::reloadOriginalSounds() {
                            "  navegar.wav confirmar.wav voltar.wav categoria.wav abrir.wav erro.wav entrada.wav transicao.wav\r\n\r\n"
                            "Para usar outros nomes, crie mapeamento.ini na pasta da versao, por exemplo:\r\n"
                            "  navegar=meu_som_de_navegacao.wav\r\n\r\n"
+                           "No PC, tools/sound_extract.py faz isso automaticamente a partir de XEX nao criptografados\r\n"
+                           "(gera mapeamento.ini, ausentes.ini, manifesto.ini e relatorio.txt por versao).\r\n\r\n"
                            "XMA (formato do console) nao e suportado: converta para WAV PCM.\r\n"
                            "Em Configuracoes > Sons originais: estado, veja o que foi carregado e o motivo de cada falha.\r\n",
                            f);
@@ -147,7 +158,9 @@ void App::reloadOriginalSounds() {
     ctx_.audio->loadOriginals(base);
     OrigReport rep = ctx_.audio->originalsReport();
     for (int t = 1; t < kSoundThemeCount; ++t)
-        logInfo("Sons originais %s: %d de %d carregados", soundThemeInfo(SoundTheme(t)).name, rep.loaded(SoundTheme(t)), kSfxCount);
+        logInfo("Sons originais %s: %d de %d validos; %d arquivos na pasta; nao confirmados %d; erros de conversao %d",
+                soundThemeInfo(SoundTheme(t)).name, rep.loaded(SoundTheme(t)), kSfxCount, rep.filesInFolder[t],
+                rep.unconfirmed[t], rep.convErrors[t]);
 }
 
 void App::openSoundStatus() { push(createSoundStatusScreen()); }

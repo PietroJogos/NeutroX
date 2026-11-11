@@ -79,8 +79,17 @@ size_t Mixer::bankBytes() const {
 }
 
 void Mixer::setTheme(SoundTheme t) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (int(t) >= 0 && int(t) < kSoundThemeCount) theme_ = t;
+    const int ti = int(t);
+    if (ti < 0 || ti >= kSoundThemeCount) return;
+    bool load;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        theme_ = t;
+        // Outro dashboard: descarrega o conjunto original anterior e carrega o novo.
+        // Voltar ao tema do Neutro X (menus) mantem o conjunto atual.
+        load = ti != int(SoundTheme::NeutroX) && ti != origResident_ && !origBase_.empty();
+    }
+    if (load) makeResident(ti);
 }
 
 SoundTheme Mixer::theme() {
@@ -106,8 +115,8 @@ void Mixer::playThemed(SoundTheme t, Sfx s, float volume, float pitch) {
     // ausente fica mudo (sem substituicao automatica por recriacao).
     const std::vector<int16_t>* data = &bank_[size_t(key)];
     if (t != SoundTheme::NeutroX && source_ == SoundSource::Originals) {
-        if (orig_.size() != bank_.size() || orig_[size_t(key)].empty()) return;
-        data = &orig_[size_t(key)];
+        if (ti != origResident_ || orig_.size() != size_t(kSfxCount) || orig_[size_t(si)].empty()) return;
+        data = &orig_[size_t(si)];
     }
     // Limita vozes simultaneas: remove a mais antiga do mesmo efeito.
     int same = 0;

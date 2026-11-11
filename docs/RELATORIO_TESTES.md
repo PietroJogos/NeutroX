@@ -1,9 +1,9 @@
-# Relatório de testes — 0.7.1-beta
+# Relatório de testes — 0.7.2-beta
 
 Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
 
-**Resultado: 966 verificações aprovadas, 0 falharam** (inclui o teste opcional com a pasta real).
+**Resultado: 977 verificações aprovadas, 0 falharam**; com o teste opcional da pasta real (`NEUTROX_DADOS_REAIS`), **993 aprovadas, 0 falharam**.
 
 | # | Teste obrigatório | Como foi verificado | Resultado |
 |---|---|---|---|
@@ -99,13 +99,14 @@ Os valores variam entre execuções (a máquina estava com outros programas aber
 |---|---|
 | XEX criptografados (6717, 9199, 13604, 15574) | recusados com motivo registrado (sem chaves, sem contorno) ✅ |
 | Descompressão do 17559 (`neutrox_xex_unpack`) | imagem de 16.941.056 bytes, MZ+PE válidos, 36 pacotes `XUIZ`; **idêntica** nas compilações MSVC e GCC ✅ |
-| Áudios embutidos encontrados | 16 (pacote `controlp`), todos XMA 44,1 kHz ✅ |
-| Conversão para WAV (FFmpeg `xma1`) | 16 de 16; sinal contínuo (autocorrelação ≈ 1), estéreo correlacionado ✅ |
-| Funções por nome original | 6 de 8 (navegar, confirmar, voltar, categoria, abrir, transição) ✅ |
-| Ausências registradas com causa | erro, entrada (banco externo `dash.xwb`/`dash.xsb` não fornecido) ✅ |
-| Carregador do Neutro X | lê `ausentes.ini`, conta todos os `.wav` da pasta; teste com pasta simulada ✅ |
-| Teste opcional com a pasta real (`NEUTROX_DADOS_REAIS`) | Metro V2: 6 de 8 efeitos carregados, 16 arquivos; demais versões 0; cada interface toca os originais do seu tema e fica muda onde não há original (sem substituição) ✅ |
-| `NeutroX.exe` com a pasta real | log: "Sons originais Metro V2 17559: 6 de 8 carregados" ✅ |
+| Áudios embutidos encontrados (0.7.2) | banco XACT3 `dashcomm/dash.xwb` (36 ondas XMA2) + `dash.xsb` (51 cues) + 16 RIFF XMA do `controlp` ✅ |
+| Conversão e validação (FFmpeg `xma1`/`xma2`) | 52 de 52; canais/taxa conferidos; duração de cada onda = declarada no banco (≤ 768 amostras de diferença); nenhum vazio ou silencioso; 0 erros ✅ |
+| Cue → onda | 51 cues mapeadas; pares L/R compartilham a mesma onda (`swipe_L/R_success` → 4, `peek_L/R` → 18), coerente com o banco ✅ |
+| Funções por evidência | 7 de 8 (navegar `btn_Focus`, confirmar `snd_buttonselect`, voltar `snd_buttonback`, categoria `tab_switch`, abrir `snd_panelunfold`, erro `btn_InactiveSelect`, transição `snd_transitionfrom`) ✅ |
+| Não confirmados | 17 (guardados, não usados), inclusive `btn_InactiveFocus` por taxa incerta ✅ |
+| Ausências registradas com causa | entrada (nenhuma cue de abertura) e, nas 4 versões criptografadas, todos os efeitos ✅ |
+| Carregador do Neutro X | `local_audio/` (aceita `sons_originais/`), lê `manifesto.ini`; só o conjunto do dashboard ativo fica na memória, troca descarrega o anterior ✅ |
+| Teste opcional com a pasta real (`NEUTROX_DADOS_REAIS`) | Metro V2: 7 de 8 efeitos carregados, 52 arquivos, 17 não confirmados, 0 erros; demais versões 0 ("sem acesso: XEX criptografado"); cada interface deixa residente só o próprio conjunto ✅ |
 | Texto da interface | `glyph_check.py` agora também decodifica escapes `\x..`; encontrou e corrigiu "…" ✅ |
 
 ## Não testado
