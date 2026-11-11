@@ -655,12 +655,15 @@ def main(argv):
     a = ap.parse_args(argv)
 
     here = pathlib.Path(__file__).resolve().parent.parent
-    unpack = a.unpack or next((str(p) for p in [here / "build_release/Release/neutrox_xex_unpack.exe",
+    tooldir = pathlib.Path(__file__).resolve().parent
+    unpack = a.unpack or next((str(p) for p in [tooldir / "neutrox_xex_unpack.exe",  # pacote de release
+                                                 here / "build_release/Release/neutrox_xex_unpack.exe",
                                                  here / "build/Release/neutrox_xex_unpack.exe",
                                                  here / "build/neutrox_xex_unpack"] if p.exists()), None)
-    if not unpack:
+    if not unpack or not pathlib.Path(unpack).is_file():
         print("ERRO: neutrox_xex_unpack nao encontrado (compile o projeto ou use --unpack)")
         return 2
+    unpack = str(pathlib.Path(unpack).resolve())  # caminho absoluto: o CreateProcess nao resolve relativos com '/'
     a.ffmpeg = find_ffmpeg(a.ffmpeg)
     if not a.ffmpeg:
         print("ERRO: nenhum ffmpeg com decodificadores XMA/XMA2 encontrado (instale o FFmpeg completo ou use --ffmpeg)")
