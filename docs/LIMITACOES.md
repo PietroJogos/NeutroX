@@ -1,4 +1,4 @@
-# Limitações conhecidas (versão 0.5.0-beta)
+# Limitações conhecidas (versão 0.6.0-beta)
 
 ## Plataforma
 - **Não existe executável para o Xbox 360 ainda.** Nenhuma ferramenta desta máquina gera
@@ -10,14 +10,17 @@
   processador do Xbox 360 o custo será maior. O caminho por GPU está planejado.
 
 ## Interfaces
-- **Blades, NXE, Kinect e Metro V1 estão completos (Fases 4–7).** O Metro V2 segue em
-  **versão provisória** (fundo representativo + seções LB/RB + menu START) até a Fase 8.
+- **As cinco interfaces estão completas (Fases 4–8).**
 - Opções da interface, favoritos e blocos fixados valem só durante a sessão.
 - Quadros com animação são desenhados ao vivo pelo renderizador em software; no PC ficam
   abaixo de 16,7 ms em 720p, mas no Xbox 360 exigirão o caminho por GPU (Fase 10).
 - Kinect: sem reconhecimento corporal; a interface funciona só com o controle.
 - Avatar: figura genérica própria; sem ligação com o serviço oficial de avatares.
-- Biblioteca de jogos: somente demonstração (Fase 8); não lança jogos.
+- Biblioteca de jogos: somente demonstração (8 jogos fictícios); **não detecta nem lança
+  jogos reais**. Detectar jogos do console exigirá estudar mecanismos documentados do
+  ambiente homebrew e validar a segurança do fluxo (após a Fase 10).
+- Painéis "informações locais" mostram dados do Neutro X e do aparelho que o app já conhece;
+  nenhuma configuração do console é lida.
 
 ## Sons
 - Os sons originais **não** acompanham o projeto. Os XEX fornecidos não têm áudio

@@ -9,7 +9,7 @@ std::unique_ptr<Dashboard> mkBlades() { return createBladesDashboard(); }
 std::unique_ptr<Dashboard> mkNxe() { return createNxeDashboard(); }
 std::unique_ptr<Dashboard> mkKinect() { return createKinectDashboard(); }
 std::unique_ptr<Dashboard> mkMetroV1() { return createMetroV1Dashboard(); }
-std::unique_ptr<Dashboard> mkMetroV2() { return createPlaceholderDashboard(DashboardId::MetroV2); }
+std::unique_ptr<Dashboard> mkMetroV2() { return createMetroV2Dashboard(); }
 
 const char* const kBladesSections[] = {"Xbox Live", "Jogos", "Mídia", "Sistema"};
 const char* const kNxeSections[] = {"Meu Xbox", "Biblioteca de Jogos", "Mídia", "Configurações"};

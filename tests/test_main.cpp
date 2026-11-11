@@ -130,7 +130,7 @@ static void testFont() {
         if (!f.hasGlyph(uint32_t(c))) std::printf("  sem glifo: '%c'\n", c);
         CHECK(f.hasGlyph(uint32_t(c)));
     }
-    const char* pt = "áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ";
+    const char* pt = "áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ×·–—°";
     const char* p = pt;
     while (uint32_t cp = utf8Next(p)) CHECK(f.hasGlyph(cp));
     const GlyphBitmap& g = f.glyph('A', 32, FontWeight::Regular);
@@ -1030,6 +1030,158 @@ static void testMetroV1() {
     CHECK(h.plat.renderer().textureCount() == 0);
 }
 
+static void testMetroV2() {
+    section("Fase 8: Metro V2 - blocos escuros, biblioteca, paineis locais");
+    Harness h(tempDir("metro_v2"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    h.app.openDashboard(DashboardId::MetroV2);
+    h.waitIdle();
+    h.idle(1.0f);
+    CHECK(has(h.app.topDebugState(), "category=0 sel=0 library=0"));
+    h.shot("60_metro2_inicio");
+    // Navegacao espacial e bordas
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=1 "));
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=5 "));
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "category=1 sel=0"));
+    h.step(0, 8);
+    h.shot("61_metro2_troca_categoria");
+    h.idle(0.6f);
+    h.tap(Button::Left);
+    CHECK(has(h.app.topDebugState(), "category=0 sel=5 "));
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "sel=6 "));
+    h.tap(Button::A);  // Mensagens
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.tap(Button::B);
+    h.idle(0.4f);
+    // Painel de informacoes locais
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=7 "));
+    h.tap(Button::A);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "info=1"));
+    h.shot("62_metro2_informacoes");
+    h.tap(Button::B);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "info=0"));
+    // Biblioteca de jogos
+    h.tap(Button::B);  // primeiro bloco
+    h.tap(Button::Right);  // Meus jogos
+    h.tap(Button::A);
+    h.idle(0.6f);
+    CHECK(has(h.app.topDebugState(), "library=1 filter=0 libSel=0 libCount=8"));
+    for (int i = 0; i < 4; ++i) h.tap(Button::Right);  // limite da linha
+    CHECK(has(h.app.topDebugState(), "libSel=3 "));
+    h.tap(Button::Down);
+    h.tap(Button::Down);  // limite
+    CHECK(has(h.app.topDebugState(), "libSel=7 "));
+    h.idle(0.5f);
+    h.shot("63_metro2_biblioteca");
+    h.tap(Button::A);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "library=1") && has(h.app.topDebugState(), "detail=1"));
+    h.tap(Button::A);  // jogar: demonstracao
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.shot("64_metro2_info_jogo");
+    h.tap(Button::B);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "library=1") && has(h.app.topDebugState(), "detail=0"));
+    // Filtros por categoria
+    h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "filter=1 libSel=0 libCount=2"));
+    for (int i = 0; i < 5; ++i) h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "filter=6 libSel=0 libCount=3"));
+    h.idle(0.5f);
+    h.shot("65_metro2_filtro_arcade");
+    h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "filter=7 libSel=0 libCount=8"));
+    h.tap(Button::RB);  // limite
+    CHECK(has(h.app.topDebugState(), "filter=7"));
+    h.tap(Button::LB);
+    CHECK(has(h.app.topDebugState(), "filter=6"));
+    h.tap(Button::B);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "library=0"));
+    // Categoria configuracoes: painel local, Neutro X, Sobre, Sons originais
+    for (int i = 0; i < 4; ++i) h.tap(Button::RB);
+    h.tap(Button::RB);  // limite
+    CHECK(has(h.app.topDebugState(), "category=4"));
+    h.idle(0.6f);
+    h.shot("66_metro2_configuracoes");
+    h.tap(Button::A);  // Sistema -> painel de informacoes
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "info=1"));
+    h.tap(Button::B);
+    h.idle(0.4f);
+    h.tap(Button::Right);
+    h.tap(Button::Right);  // Neutro X
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::B);
+    h.waitIdle();
+    h.tap(Button::Down);  // Sobre
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "About");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(h.app.topDebugSelect(4, 4));  // Sons originais
+    h.step(0, 2);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "SoundStatus");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Metro V2");
+    // Fixar e opcoes
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "pins=1"));
+    int tex = h.plat.renderer().textureCount();
+    h.tap(Button::Y);
+    h.idle(0.3f);
+    h.tap(Button::A);  // fundo preto
+    h.tap(Button::Down);
+    h.tap(Button::A);  // destaque azul
+    CHECK(has(h.app.topDebugState(), "options=1 bg=1 accent=1"));
+    CHECK(h.plat.renderer().textureCount() == tex);
+    h.idle(0.3f);
+    h.shot("67_metro2_opcoes");
+    h.tap(Button::B);
+    h.tap(Button::B);
+    h.tap(Button::B);
+    h.idle(0.8f);
+    h.shot("68_metro2_preto_azul");
+    // Todos os blocos executam sua acao e voltam
+    const int counts[5] = {10, 12, 7, 8, 8};
+    int opened = 0;
+    for (int c = 0; c < 5; ++c) {
+        for (int i = 0; i < counts[c]; ++i) {
+            CHECK(h.app.topDebugSelect(c, i));
+            h.step(0, 2);
+            h.tap(Button::A);
+            h.step(0, 12);
+            ++opened;
+            std::string s = h.app.topDebugState();
+            if (std::string(h.app.topScreenName()) != "Metro V2") { h.tap(Button::B); h.waitIdle(); }
+            else if (has(s, "detail=1") || has(s, "info=1") || has(s, "library=1")) { h.tap(Button::B); h.step(0, 12); }
+            CHECK(std::string(h.app.topScreenName()) == "Metro V2");
+            CHECK(has(h.app.topDebugState(), "library=0") && has(h.app.topDebugState(), "detail=0") &&
+                  has(h.app.topDebugState(), "info=0"));
+        }
+    }
+    CHECK(opened == 45);
+    CHECK(logErrorCount() == 0);
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -1243,6 +1395,8 @@ static void testPerformance() {
     liveBench(DashboardId::Kinect, "Kinect destaque na grade", Button::Down, Button::Up);
     liveBench(DashboardId::MetroV1, "Metro V1 troca de categoria", Button::RB, Button::LB);
     liveBench(DashboardId::MetroV1, "Metro V1 borda entre blocos", Button::Right, Button::Left);
+    liveBench(DashboardId::MetroV2, "Metro V2 troca de categoria", Button::RB, Button::LB);
+    liveBench(DashboardId::MetroV2, "Metro V2 navegacao entre blocos", Button::Right, Button::Left);
 }
 
 int main(int argc, char** argv) {
@@ -1264,6 +1418,7 @@ int main(int argc, char** argv) {
     testNxe();
     testKinect();
     testMetroV1();
+    testMetroV2();
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();

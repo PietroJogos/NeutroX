@@ -10,8 +10,8 @@
 | 5 | NXE: painéis, canais, animações, avatar genérico | ✅ Concluída (11/11/2026) |
 | 6 | Kinect: cartões, layout, transições | ✅ Concluída (11/11/2026) |
 | 7 | Metro V1: blocos, categorias, animações | ✅ Concluída (11/11/2026) |
-| 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ⏳ Próxima |
-| 9 | Integração, memória, estabilidade, desempenho | Pendente (base já testada) |
+| 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ✅ Concluída (11/11/2026) |
+| 9 | Integração, memória, estabilidade, desempenho | ⏳ Próxima (base já testada a cada fase) |
 | 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | Pendente — depende da cadeia xsdk |
 
 Política de releases: toda versão é publicada como **pré-release (beta)** até a Fase 10
@@ -91,3 +91,22 @@ terminar; só então uma versão é marcada como *Latest*.
   telas do app (Configurações, Sobre, Sons originais).
 - X fixa blocos; Y: fundo claro/cinza e cor dos blocos (verde, azul, laranja, roxo).
 - Sons do tema Metro V1 15574.
+## Fase 8 — resultado (Metro V2)
+- Fundo escuro com destaques verdes; cinco categorias (início, jogos, filmes e tv,
+  aplicativos, configurações) com sublinhado verde que desliza; grade compacta de blocos
+  em três linhas, navegação espacial rápida e troca de categoria pelas bordas ou LB/RB.
+- Bloco selecionado "salta" (escala, sombra, verde mais claro).
+- **Biblioteca de jogos demonstrativa**: filtros por categoria (todos, ação, aventura,
+  corrida, quebra-cabeça, simulação, arcade, a–z) com LB/RB, grade de miniaturas locais,
+  contador, linha de informações e **tela informativa** de cada jogo (jogar → só informa
+  que é demonstração; conquistas; complementos; detalhes).
+- **Painéis de informações locais** com valores reais: hora/data, versão, resolução,
+  dashboard atual e padrão, volume, sons originais carregados, memória de texturas, pasta
+  de dados, conexão (offline).
+- Configurações: atalhos para Neutro X, Sobre, Sons originais e painéis de sistema.
+- Y: fundo escuro/preto e cor de destaque (verde, azul, laranja); X fixa blocos.
+- Sons do tema Metro V2 17559.
+- Também: glifo "×" adicionado à fonte e ferramenta `tools/glyph_check.py`, que verifica se
+  todo texto da interface tem glifo; o dashboard provisório (não mais usado) foi removido.
+
+**Com a Fase 8, as cinco interfaces estão completas.**

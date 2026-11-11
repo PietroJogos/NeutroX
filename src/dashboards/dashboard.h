@@ -64,10 +64,10 @@ void drawMetroV1Preview(IRenderer& r, float time);
 void drawMetroV2Preview(IRenderer& r, float time);
 
 // Fabricas.
-std::unique_ptr<Dashboard> createPlaceholderDashboard(DashboardId id);
 std::unique_ptr<Dashboard> createBladesDashboard();
 std::unique_ptr<Dashboard> createNxeDashboard();
 std::unique_ptr<Dashboard> createKinectDashboard();
 std::unique_ptr<Dashboard> createMetroV1Dashboard();
+std::unique_ptr<Dashboard> createMetroV2Dashboard();
 
 }  // namespace nx

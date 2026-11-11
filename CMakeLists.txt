@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NeutroX VERSION 0.5.0 LANGUAGES CXX)
+project(NeutroX VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,13 +27,12 @@ add_library(neutrox_core STATIC
     src/audio/themes/metro_v2_17559.cpp
     src/settings/settings.cpp
     src/dashboards/registry.cpp
-    src/dashboards/placeholder_dashboard.cpp
     src/dashboards/common/demo_content.cpp
     src/dashboards/blades/blades_dashboard.cpp
     src/dashboards/nxe/nxe_dashboard.cpp
     src/dashboards/kinect/kinect_dashboard.cpp
     src/dashboards/metro_v1/metro_v1_dashboard.cpp
-    src/dashboards/metro_v2/metro_v2_preview.cpp
+    src/dashboards/metro_v2/metro_v2_dashboard.cpp
     src/shell/main_menu.cpp
     src/shell/screens.cpp
 )

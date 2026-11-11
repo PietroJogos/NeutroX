@@ -11,10 +11,10 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: beta 0.5.0 (Fases 1–7 concluídas).** Roda hoje como **prévia no Windows**.
+> **Status: beta 0.6.0 (Fases 1–8 concluídas).** Roda hoje como **prévia no Windows**.
 > O executável para o console (`.xex`) ainda **não** existe — ver [Fase 10](docs/FASES.md)
-> e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). **Blades**, **NXE**, **Kinect** e **Metro V1** já estão completos;
-> o Metro V2 segue com tela provisória navegável até a Fase 8.
+> e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). As **cinco interfaces estão completas**; faltam a
+> integração/otimização final (Fase 9) e a compilação para o console (Fase 10).
 
 ![Menu principal](docs/img/menu_principal.png)
 
@@ -25,6 +25,10 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 ![Kinect](docs/img/kinect.png)
 
 ![Metro V1](docs/img/metro_v1.png)
+
+![Metro V2](docs/img/metro_v2.png)
+
+![Biblioteca de jogos (Metro V2)](docs/img/metro_v2_biblioteca.png)
 
 ## Princípios
 
@@ -90,7 +94,7 @@ src/dashboards/  registro e telas das cinco interfaces
 src/shell/       menu inicial, configurações, sobre, menu START, diálogos, erro
 src/platform/    win32 (prévia), headless (testes), xbox360 (porta futura)
 assets/          sons recriados exportados em WAV, por versão
-tools/           xex_inspect.py (análise de cabeçalho), exportador de sons
+tools/           xex_inspect.py (análise de cabeçalho), glyph_check.py (texto x fonte), exportador de sons
 docs/            relatórios, arquitetura, toolchain, limitações, fases
 tests/           testes automatizados
 ```

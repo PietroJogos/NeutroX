@@ -56,6 +56,28 @@ uniforme para a resolução real e centraliza com barras quando a proporção n�
 - Só um dashboard fica carregado por vez (verificado nos testes: pico de texturas igual
   ao da base + um fundo).
 
+## Dashboards
+
+Cada interface é um `Dashboard` (`src/dashboards/<nome>/<nome>_dashboard.cpp`) com
+`load()/unload()` explícitos. Padrões comuns:
+
+- **Estado + funções de desenho puras**: o mesmo código desenha o dashboard ao vivo e a
+  miniatura do menu (`drawXxxPreview`), então a prévia sempre corresponde à interface.
+- **Cache de cena** (`graphics/scene_cache.h`): enquanto nada anima, o quadro é uma cópia
+  de memória; elementos que animam sempre (avatar) ficam numa camada ao vivo por cima.
+- **Conteúdo de demonstração compartilhado** (`dashboards/common/demo_content.*`): jogos,
+  amigos, mídias e perfil fictícios, usados por todas as interfaces e pela biblioteca.
+- **Ganchos de teste**: `debugState()` e `debugSelect()` permitem que os testes verifiquem a
+  navegação com precisão e visitem cada bloco/cartão.
+
+| Interface | Estrutura de navegação |
+|---|---|
+| Blades | 4 lâminas (Esq./Dir., LB/RB) × lista vertical × subpainéis |
+| NXE | 4 canais (Cima/Baixo, LB/RB) × esteira de cartões em profundidade × painéis |
+| Kinect | 6 páginas (LB/RB ou bordas) × grade 4×2 × páginas de botões grandes |
+| Metro V1 | 8 categorias × grupo de blocos com navegação espacial × páginas de detalhe |
+| Metro V2 | 5 categorias × grade espacial × biblioteca com filtros, telas de jogo e painéis locais |
+
 ## Entrada
 
 `RawPadState` (por quadro, da plataforma) → `InputMapper` → `InputFrame`:
