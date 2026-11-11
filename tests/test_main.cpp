@@ -896,6 +896,140 @@ static void testKinect() {
     CHECK(h.plat.renderer().textureCount() == 0);
 }
 
+static void testMetroV1() {
+    section("Fase 7: Metro V1 - categorias, blocos, navegacao espacial, paginas");
+    Harness h(tempDir("metro_v1"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    h.app.openDashboard(DashboardId::MetroV1);
+    h.waitIdle();
+    h.idle(1.0f);
+    CHECK(has(h.app.topDebugState(), "category=0 sel=0 detail=0"));
+    h.shot("50_metro1_inicio");
+    // Navegacao espacial no grupo "inicio": 0 (2x2) -> 1 -> 2 -> 4 -> borda -> social
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=1"));
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=2"));
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "sel=4"));
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "category=1 sel=0"));
+    h.step(0, 10);
+    h.shot("51_metro1_troca_categoria");
+    h.idle(0.8f);
+    h.tap(Button::Left);  // volta pela borda: bloco mais a direita de "inicio"
+    CHECK(has(h.app.topDebugState(), "category=0 sel=4"));
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "sel=5"));
+    h.tap(Button::Down);  // sem bloco abaixo
+    CHECK(has(h.app.topDebugState(), "sel=5"));
+    h.tap(Button::Left);  // 5 (4,1) -> 3 (2,1 largo)
+    CHECK(has(h.app.topDebugState(), "sel=3"));
+    // Categorias por LB/RB com limites
+    h.tap(Button::LB);  // limite
+    CHECK(has(h.app.topDebugState(), "category=0"));
+    for (int i = 0; i < 8; ++i) h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "category=7"));
+    h.idle(0.8f);
+    h.shot("52_metro1_configuracoes");
+    // Sistema: pagina demonstrativa
+    h.tap(Button::A);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "detail=1 detailSel=0"));
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "detailSel=1"));
+    h.shot("53_metro1_pagina_sistema");
+    h.tap(Button::B);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "detail=0"));
+    // Blocos que abrem telas do proprio app
+    h.tap(Button::Right);
+    h.tap(Button::Right);  // Neutro X (2,0 largo)
+    CHECK(has(h.app.topDebugState(), "sel=4"));
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::B);
+    h.waitIdle();
+    h.tap(Button::Down);  // Sobre
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "About");
+    h.tap(Button::B);
+    h.waitIdle();
+    h.tap(Button::Left);  // Sons originais (1,1)
+    CHECK(has(h.app.topDebugState(), "sel=3"));
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "SoundStatus");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Metro V1");
+    // B: primeiro bloco, depois "inicio"
+    h.tap(Button::B);
+    CHECK(has(h.app.topDebugState(), "category=7 sel=0"));
+    h.tap(Button::B);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "category=0"));
+    // Fixar (X)
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "pins=1"));
+    h.idle(0.3f);
+    h.shot("54_metro1_fixado");
+    h.tap(Button::X);
+    CHECK(has(h.app.topDebugState(), "pins=0"));
+    // Jogos: pagina do jogo em destaque
+    for (int i = 0; i < 4; ++i) h.tap(Button::RB);
+    h.tap(Button::Right);
+    CHECK(has(h.app.topDebugState(), "category=4 sel=2"));
+    h.idle(0.6f);
+    h.shot("55_metro1_jogos");
+    h.tap(Button::A);
+    h.idle(0.5f);
+    h.tap(Button::A);  // jogar: demonstracao
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.shot("56_metro1_pagina_jogo");
+    h.tap(Button::B);
+    h.idle(0.4f);
+    // Opcoes: fundo e cor dos blocos
+    int tex = h.plat.renderer().textureCount();
+    h.tap(Button::Y);
+    h.idle(0.3f);
+    h.tap(Button::A);
+    h.tap(Button::Down);
+    h.tap(Button::A);
+    h.tap(Button::A);
+    CHECK(has(h.app.topDebugState(), "options=1 bg=1 color=2"));
+    CHECK(h.plat.renderer().textureCount() == tex);
+    h.idle(0.3f);
+    h.shot("57_metro1_opcoes");
+    h.tap(Button::B);
+    h.idle(0.6f);
+    h.shot("58_metro1_cinza_laranja");
+    // Todos os blocos de todas as categorias executam sua acao e voltam
+    const int counts[8] = {6, 4, 5, 5, 8, 6, 6, 6};
+    int opened = 0;
+    for (int c = 0; c < 8; ++c) {
+        for (int i = 0; i < counts[c]; ++i) {
+            CHECK(h.app.topDebugSelect(c, i));
+            h.step(0, 2);
+            h.tap(Button::A);
+            h.step(0, 10);
+            ++opened;
+            if (std::string(h.app.topScreenName()) != "Metro V1") { h.tap(Button::B); h.waitIdle(); }
+            else if (has(h.app.topDebugState(), "detail=1")) { h.tap(Button::B); h.step(0, 10); }
+            CHECK(std::string(h.app.topScreenName()) == "Metro V1");
+        }
+    }
+    CHECK(opened == 46);
+    CHECK(!h.app.topDebugSelect(8, 0) && !h.app.topDebugSelect(0, 99));
+    CHECK(logErrorCount() == 0);
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -1107,6 +1241,8 @@ static void testPerformance() {
     liveBench(DashboardId::Nxe, "NXE esteira de cartoes", Button::Right, Button::Left);
     liveBench(DashboardId::Kinect, "Kinect deslize de pagina", Button::RB, Button::LB);
     liveBench(DashboardId::Kinect, "Kinect destaque na grade", Button::Down, Button::Up);
+    liveBench(DashboardId::MetroV1, "Metro V1 troca de categoria", Button::RB, Button::LB);
+    liveBench(DashboardId::MetroV1, "Metro V1 borda entre blocos", Button::Right, Button::Left);
 }
 
 int main(int argc, char** argv) {
@@ -1127,6 +1263,7 @@ int main(int argc, char** argv) {
     testBlades();
     testNxe();
     testKinect();
+    testMetroV1();
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();

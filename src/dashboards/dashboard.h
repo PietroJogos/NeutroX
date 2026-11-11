@@ -49,6 +49,8 @@ public:
     virtual void unload(Context& ctx) = 0;
     // Estado interno resumido (para testes automatizados e log).
     virtual std::string debugState() const { return ""; }
+    // Somente testes: seleciona diretamente (grupo, item). Retorna false se nao suportado/invalido.
+    virtual bool debugSelect(int group, int item) { (void)group; (void)item; return false; }
 
 private:
     DashboardId id_;
@@ -66,5 +68,6 @@ std::unique_ptr<Dashboard> createPlaceholderDashboard(DashboardId id);
 std::unique_ptr<Dashboard> createBladesDashboard();
 std::unique_ptr<Dashboard> createNxeDashboard();
 std::unique_ptr<Dashboard> createKinectDashboard();
+std::unique_ptr<Dashboard> createMetroV1Dashboard();
 
 }  // namespace nx

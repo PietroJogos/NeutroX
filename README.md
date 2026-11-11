@@ -11,10 +11,10 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: beta 0.4.0 (Fases 1–6 concluídas).** Roda hoje como **prévia no Windows**.
+> **Status: beta 0.5.0 (Fases 1–7 concluídas).** Roda hoje como **prévia no Windows**.
 > O executável para o console (`.xex`) ainda **não** existe — ver [Fase 10](docs/FASES.md)
-> e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). **Blades**, **NXE** e **Kinect** já estão completos; Metro V1 e
-> Metro V2 seguem com telas provisórias navegáveis até as Fases 7 e 8.
+> e [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). **Blades**, **NXE**, **Kinect** e **Metro V1** já estão completos;
+> o Metro V2 segue com tela provisória navegável até a Fase 8.
 
 ![Menu principal](docs/img/menu_principal.png)
 
@@ -23,6 +23,8 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 ![NXE](docs/img/nxe.png)
 
 ![Kinect](docs/img/kinect.png)
+
+![Metro V1](docs/img/metro_v1.png)
 
 ## Princípios
 

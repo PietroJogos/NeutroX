@@ -1,4 +1,4 @@
-# Limitações conhecidas (versão 0.4.0-beta)
+# Limitações conhecidas (versão 0.5.0-beta)
 
 ## Plataforma
 - **Não existe executável para o Xbox 360 ainda.** Nenhuma ferramenta desta máquina gera
@@ -10,9 +10,9 @@
   processador do Xbox 360 o custo será maior. O caminho por GPU está planejado.
 
 ## Interfaces
-- **Blades (Fase 4), NXE (Fase 5) e Kinect (Fase 6) estão completos.** Metro V1 e Metro V2
-  seguem em **versão provisória** (fundo representativo + seções LB/RB + menu START) até as Fases 7 e 8.
-- Blades, NXE e Kinect: opções da interface e favoritos valem só durante a sessão.
+- **Blades, NXE, Kinect e Metro V1 estão completos (Fases 4–7).** O Metro V2 segue em
+  **versão provisória** (fundo representativo + seções LB/RB + menu START) até a Fase 8.
+- Opções da interface, favoritos e blocos fixados valem só durante a sessão.
 - Quadros com animação são desenhados ao vivo pelo renderizador em software; no PC ficam
   abaixo de 16,7 ms em 720p, mas no Xbox 360 exigirão o caminho por GPU (Fase 10).
 - Kinect: sem reconhecimento corporal; a interface funciona só com o controle.

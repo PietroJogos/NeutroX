@@ -9,8 +9,8 @@
 | 4 | Blades: lâminas, abas, animações, navegação, sons | ✅ Concluída (11/11/2026) |
 | 5 | NXE: painéis, canais, animações, avatar genérico | ✅ Concluída (11/11/2026) |
 | 6 | Kinect: cartões, layout, transições | ✅ Concluída (11/11/2026) |
-| 7 | Metro V1: blocos, categorias, animações | ⏳ Próxima |
-| 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | Pendente |
+| 7 | Metro V1: blocos, categorias, animações | ✅ Concluída (11/11/2026) |
+| 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ⏳ Próxima |
 | 9 | Integração, memória, estabilidade, desempenho | Pendente (base já testada) |
 | 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | Pendente — depende da cadeia xsdk |
 
@@ -76,3 +76,18 @@ terminar; só então uma versão é marcada como *Latest*.
 - Y: fundos Roxo, Azul e Grafite; mostrar/ocultar avatar (na margem esquerda).
 - **Sem sensor**: um aviso fixo e o cartão "Sensor Kinect" explicam que tudo funciona
   pelo controle. Sons do tema Kinect 13604.
+## Fase 7 — resultado (Metro V1)
+- Fundo claro; oito categorias em tipografia leve no topo (início, social, tv, vídeo, jogos,
+  música, aplicativos, configurações). O cabeçalho rola para manter a categoria atual à
+  esquerda.
+- Um grupo de blocos por categoria, em duas linhas, com tamanhos 1×1, 2×1 e 2×2; os grupos
+  vizinhos "espiam" nas bordas. Troca de categoria com deslize horizontal e animação de
+  entrada dos blocos em cascata.
+- **Navegação espacial**: as setas vão ao bloco mais próximo naquela direção; na borda,
+  mudam de categoria (entrando pelo bloco da borda mais próximo da linha atual).
+- **Borda branca destacada** no bloco selecionado, deslizando e mudando de tamanho.
+- **Cartão informativo** sob o grupo (título + descrição do bloco).
+- **Cada bloco tem uma ação** (46 ao todo): páginas demonstrativas no estilo da geração ou
+  telas do app (Configurações, Sobre, Sons originais).
+- X fixa blocos; Y: fundo claro/cinza e cor dos blocos (verde, azul, laranja, roxo).
+- Sons do tema Metro V1 15574.

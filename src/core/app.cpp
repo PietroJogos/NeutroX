@@ -225,6 +225,12 @@ const char* App::topScreenName() const { return stack_.empty() ? "" : stack_.bac
 
 bool App::hasActiveDashboard() const { return activeDash_ != DashboardId::Count; }
 
+bool App::topDebugSelect(int group, int item) {
+    if (stack_.empty()) return false;
+    if (auto* d = dynamic_cast<Dashboard*>(stack_.back().get())) return d->debugSelect(group, item);
+    return false;
+}
+
 std::string App::topDebugState() const {
     if (stack_.empty()) return "";
     if (auto* d = dynamic_cast<const Dashboard*>(stack_.back().get())) return d->debugState();
