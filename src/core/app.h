@@ -10,7 +10,7 @@
 
 namespace nx {
 
-constexpr const char* kNeutroXVersion = "0.1.0";
+constexpr const char* kNeutroXVersion = "0.2.0";
 
 struct FrameStats {
     uint64_t frames = 0;
@@ -58,6 +58,7 @@ public:
     TextureId previewTexture(DashboardId id, bool smallSize) const;
     int screenCount() const { return int(stack_.size()); }
     const char* topScreenName() const;
+    std::string topDebugState() const;  // estado do dashboard no topo (testes)
     bool hasActiveDashboard() const;
     DashboardId activeDashboard() const { return activeDash_; }
     bool busy() const { return phase_ != Phase::Idle || !pending_.empty(); }

@@ -25,6 +25,7 @@
 #include "core/png_writer.h"
 #include "graphics/font.h"
 #include "graphics/soft_renderer.h"
+#include "graphics/ui.h"
 #include "input/input.h"
 #include "platform/headless/headless_platform.h"
 #include "settings/settings.h"
@@ -520,6 +521,117 @@ static void testAppFlow() {
     CHECK(h.plat.renderer().textureCount() == 0);  // tudo liberado
 }
 
+static bool has(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
+
+static void testBlades() {
+    section("Fase 4: Blades - laminas, lista, subpaineis, opcoes");
+    Harness h(tempDir("blades"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    h.app.openDashboard(DashboardId::Blades);
+    h.waitIdle();
+    h.idle(1.0f);
+    std::string s = h.app.topDebugState();
+    CHECK(has(s, "blade=0 sel=0 detail=0"));
+    h.shot("20_blades_xbox_live");
+    // Lista: limites e movimento
+    h.tap(Button::Down);
+    h.tap(Button::Down);
+    CHECK(has(h.app.topDebugState(), "sel=2"));
+    h.tap(Button::Up);
+    h.tap(Button::Up);
+    h.tap(Button::Up);  // ja no topo
+    CHECK(has(h.app.topDebugState(), "sel=0"));
+    // Laminas: RB/Direita avancam, LB/Esquerda voltam, sem passar dos limites
+    h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "blade=1"));
+    h.step(0, 9);  // meio da animacao de "virar" a lamina
+    h.tap(Button::Right);
+    h.step(0, 6);
+    h.shot("21_blades_transicao");
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "blade=2"));
+    h.shot("22_blades_midia");
+    h.tap(Button::Right);
+    h.tap(Button::Right);  // limite
+    CHECK(has(h.app.topDebugState(), "blade=3"));
+    h.idle(0.8f);
+    h.shot("23_blades_sistema");
+    h.tap(Button::Left);
+    h.tap(Button::LB);
+    CHECK(has(h.app.topDebugState(), "blade=1"));
+    h.idle(0.8f);
+    h.shot("24_blades_jogos");
+    // Subpainel: Biblioteca de Jogos
+    h.tap(Button::A);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "detail=1 detailSel=0"));
+    for (int i = 0; i < 7; ++i) h.tap(Button::Down);  // rola ate o ultimo jogo
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "detailSel=7"));
+    h.shot("25_blades_biblioteca");
+    h.tap(Button::Down);  // limite
+    CHECK(has(h.app.topDebugState(), "detailSel=7"));
+    h.tap(Button::A);  // item informativo (toast), continua no subpainel
+    CHECK(has(h.app.topDebugState(), "detail=1"));
+    h.tap(Button::B);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "detail=0"));
+    // B fora do subpainel volta para a primeira lamina
+    h.tap(Button::B);
+    h.idle(0.8f);
+    CHECK(has(h.app.topDebugState(), "blade=0"));
+    // Opcoes (Y): fundo grafite e relogio
+    h.tap(Button::Y);
+    h.idle(0.4f);
+    CHECK(has(h.app.topDebugState(), "options=1"));
+    int texBefore = h.plat.renderer().textureCount();
+    h.tap(Button::A);  // fundo -> grafite (recria a textura de fundo)
+    CHECK(has(h.app.topDebugState(), "graphite=1"));
+    CHECK(h.plat.renderer().textureCount() == texBefore);
+    h.tap(Button::Down);
+    h.tap(Button::A);  // relogio -> ocultar
+    CHECK(has(h.app.topDebugState(), "clock=0"));
+    h.idle(0.3f);
+    h.shot("26_blades_opcoes");
+    h.tap(Button::B);
+    h.idle(0.5f);
+    CHECK(has(h.app.topDebugState(), "options=0"));
+    h.shot("27_blades_grafite");
+    // Sistema -> Configuracoes do Neutro X abre a tela do shell e volta
+    for (int i = 0; i < 3; ++i) h.tap(Button::RB);
+    for (int i = 0; i < 4; ++i) h.tap(Button::Down);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Settings");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Blades");
+    // Subpaineis de todas as laminas abrem e fecham sem erro.
+    for (int b = 0; b < 4; ++b) {
+        h.tap(b == 0 ? Button::B : Button::RB);
+        h.idle(0.5f);
+        for (int i = 0; i < 6; ++i) {
+            h.tap(Button::A);
+            h.step(0, 10);
+            if (std::string(h.app.topScreenName()) != "Blades") {  // itens que abrem telas do shell
+                h.tap(Button::B);
+                h.waitIdle();
+            } else if (has(h.app.topDebugState(), "detail=1")) {
+                h.tap(Button::B);
+                h.step(0, 10);
+            }
+            h.tap(Button::Down);
+        }
+        for (int i = 0; i < 6; ++i) h.tap(Button::Up);
+    }
+    CHECK(std::string(h.app.topScreenName()) == "Blades");
+    CHECK(logErrorCount() == 0);
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -673,6 +785,59 @@ static void testPerformance() {
         if (res.w == 1280) CHECK(worst < 16.7);  // 60 FPS no PC em 720p
         h.app.shutdown();
     }
+    // Custo de um quadro AO VIVO (sem cache), por componente, em 720p.
+    SoftRenderer r(1280, 720);
+    auto bench = [&](const char* label, const std::function<void()>& fn) {
+        fn();
+        double t0 = nowMs();
+        for (int i = 0; i < 30; ++i) { r.beginFrame(); fn(); }
+        double ms = (nowMs() - t0) / 30;
+        std::printf("  ao vivo 720p %-28s %6.2f ms\n", label, ms);
+        return ms;
+    };
+    double bl = bench("Blades (cena completa)", [&]() { dashboardInfo(DashboardId::Blades).drawPreview(r, 0); });
+    bench("radial tela cheia", [&]() { r.fillRadial(640, 380, 700, Color(228, 231, 234), Color(228, 231, 234, 0), Rectf{0, 0, 1280, 720}); });
+    bench("contorno circulo r=520", [&]() { r.strokeCircle(640, 380, 520, 3, Color(255, 255, 255, 40)); });
+    bench("poligono 1/4 tela alfa", [&]() {
+        Vec2 q[4] = {{400, 30}, {700, 30}, {480, 690}, {180, 690}};
+        r.fillConvex(q, 4, Color(255, 255, 255, 16));
+    });
+    bench("icone 110 px", [&]() { drawIcon(r, Icon::Person, 640, 360, 110, Color(255, 255, 255, 200)); });
+    bench("arte abstrata 434x324", [&]() { drawAbstractArt(r, Rectf{700, 120, 434, 324}, 1, Color(200, 100, 50), Color(20, 10, 5)); });
+    bench("gradiente 1100x660", [&]() { r.fillGradientV(Rectf{100, 30, 1100, 660}, Color(90, 180, 40), Color(30, 90, 10)); });
+    bench("ret. arredondado 1100x660", [&]() { r.fillRoundRect(Rectf{100, 30, 1100, 660}, 22, Color(90, 180, 40)); });
+    bench("texto 40 linhas", [&]() {
+        TextStyle st;
+        st.size = 30;
+        for (int i = 0; i < 40; ++i) r.drawText("Biblioteca de Jogos", 100, 10.0f + i * 17, st);
+    });
+    (void)bl;  // referencia informativa (inclui o fundo desenhado direto, sem cache)
+
+    // Pior caso realista: o dashboard Blades AO VIVO durante a animacao de troca
+    // de lamina. Usa a mediana por quadro (resistente a ruido da maquina).
+    {
+        Harness h(tempDir("perf_live"), 1280, 720);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        h.app.openDashboard(DashboardId::Blades);
+        h.waitIdle();
+        h.idle(1.2f);
+        std::vector<double> ft;
+        for (int round = 0; round < 6; ++round) {
+            h.step(bit(round % 2 ? Button::LB : Button::RB), 1);
+            for (int f = 0; f < 24; ++f) {
+                double t0 = nowMs();
+                h.step(0, 1);
+                ft.push_back(nowMs() - t0);
+            }
+        }
+        std::sort(ft.begin(), ft.end());
+        double med = ft[ft.size() / 2], p90 = ft[ft.size() * 9 / 10];
+        std::printf("  Blades ao vivo (troca de lamina, 720p): mediana %.2f ms, p90 %.2f ms\n", med, p90);
+        CHECK(med < 16.7);
+        h.app.shutdown();
+    }
 }
 
 int main(int argc, char** argv) {
@@ -690,6 +855,7 @@ int main(int argc, char** argv) {
     testAudio();
     testOriginalSounds();
     testAppFlow();
+    testBlades();
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();

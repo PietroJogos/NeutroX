@@ -164,14 +164,38 @@ void SoftRenderer::fillRadial(float cx, float cy, float radius, Color inner, Col
     float pcx = tx(cx), pcy = ty(cy), pr = std::max(1.0f, radius * scale_);
     int x0 = std::max(int(std::floor(tx(area.x))), clip_.x0), x1 = std::min(int(std::ceil(tx(area.right()))), clip_.x1);
     int y0 = std::max(int(std::floor(ty(area.y))), clip_.y0), y1 = std::min(int(std::ceil(ty(area.bottom()))), clip_.y1);
+    if (x0 >= x1 || y0 >= y1) return;
+    // Tabela indexada pela distancia ao quadrado normalizada (evita sqrt e
+    // interpolacao em ponto flutuante por pixel).
+    constexpr int kLut = 1024;
+    struct Entry { uint8_t r, g, b; uint32_t a; };
+    Entry lut[kLut + 1];
+    for (int i = 0; i <= kLut; ++i) {
+        Color c = lerpColor(inner, outer, std::sqrt(float(i) / kLut));
+        lut[i] = Entry{c.r, c.g, c.b, effAlpha(c.a)};
+    }
+    const Entry& out = lut[kLut];
+    const float r2 = pr * pr, inv = kLut / r2;
     for (int y = y0; y < y1; ++y) {
         uint32_t* row = fb_.data() + size_t(y) * w_;
         float dy = (y + 0.5f - pcy);
-        for (int x = x0; x < x1; ++x) {
-            float dx = (x + 0.5f - pcx);
-            float t = std::sqrt(dx * dx + dy * dy) / pr;
-            Color c = lerpColor(inner, outer, t);
-            blendRaw(row[x], c.r, c.g, c.b, effAlpha(c.a));
+        float dy2 = dy * dy;
+        // Faixa da linha dentro do raio; fora dela a cor e constante (outer).
+        int sx0 = x1, sx1 = x1;
+        if (dy2 < r2) {
+            float hw = std::sqrt(r2 - dy2);
+            sx0 = std::max(x0, int(std::floor(pcx - hw)));
+            sx1 = std::min(x1, int(std::ceil(pcx + hw)));
+        }
+        if (out.a) {
+            for (int x = x0; x < std::min(sx0, x1); ++x) blendRaw(row[x], out.r, out.g, out.b, out.a);
+            for (int x = std::max(sx1, x0); x < x1; ++x) blendRaw(row[x], out.r, out.g, out.b, out.a);
+        }
+        float dx = (sx0 + 0.5f - pcx);
+        for (int x = sx0; x < sx1; ++x, dx += 1.0f) {
+            int idx = int((dx * dx + dy2) * inv);
+            const Entry& e = lut[idx < kLut ? idx : kLut];
+            if (e.a) blendRaw(row[x], e.r, e.g, e.b, e.a);
         }
     }
 }
@@ -459,6 +483,17 @@ TextureId SoftRenderer::createTexture(int w, int h, const uint32_t* argb) {
 }
 
 void SoftRenderer::destroyTexture(TextureId id) { textures_.erase(id); }
+
+bool SoftRenderer::updateTexture(TextureId id, int w, int h, const uint32_t* argb) {
+    auto it = textures_.find(id);
+    if (it == textures_.end() || !argb || it->second.w != w || it->second.h != h) return false;
+    Texture& t = it->second;
+    std::memcpy(t.px.data(), argb, size_t(w) * h * sizeof(uint32_t));
+    t.opaque = true;
+    for (uint32_t v : t.px)
+        if ((v >> 24) != 0xFF) { t.opaque = false; break; }
+    return true;
+}
 
 size_t SoftRenderer::textureBytes() const {
     size_t total = 0;

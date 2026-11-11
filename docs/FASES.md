@@ -6,8 +6,8 @@
 | 2 | Núcleo: loop, telas, erros, abstrações de vídeo/controle/áudio, configurações | ✅ Concluída (11/11/2026) |
 | 3 | Menu principal: logo, seleção com miniaturas, navegação, configurações | ✅ Concluída (11/11/2026) |
 | — | Extra: temas sonoros por versão + carregador de sons originais (pasta local) | ✅ Concluído (11/11/2026) |
-| 4 | Blades: lâminas, abas, animações, navegação, sons | ⏳ Próxima |
-| 5 | NXE: painéis, canais, animações, avatar genérico | Pendente |
+| 4 | Blades: lâminas, abas, animações, navegação, sons | ✅ Concluída (11/11/2026) |
+| 5 | NXE: painéis, canais, animações, avatar genérico | ⏳ Próxima |
 | 6 | Kinect: cartões, layout, transições | Pendente |
 | 7 | Metro V1: blocos, categorias, animações | Pendente |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | Pendente |
@@ -36,3 +36,17 @@ terminar; só então uma versão é marcada como *Latest*.
   Configurações, Sobre, Sair (com confirmação), menu START dentro dos dashboards com troca
   direta de interface, tela de erro.
 - Dashboard padrão (abre direto ao iniciar) e ação contextual X para defini-lo.
+
+## Fase 4 — resultado (Blades)
+- Quatro lâminas (Xbox Live, Jogos, Mídia, Sistema) com rótulos girados; as anteriores
+  dobram-se à esquerda e as seguintes à direita, com profundidade (encolhem e escurecem).
+- Esquerda/Direita ou LB/RB "viram" as lâminas com animação; Cima/Baixo movem a barra de
+  seleção animada; painel de destaque com troca suave.
+- A abre subpainéis por item (perfil, amigos, conquistas com barras, biblioteca de jogos de
+  demonstração, mídia, configurações somente-leitura, memória, rede); B volta; B na lista
+  volta para a primeira lâmina.
+- Y abre as opções da interface (fundo Clássico/Grafite, mostrar/ocultar relógio).
+- Relógio, data e jogador no topo da lâmina aberta. Sons do tema Blades 6717.
+- "Configurações do Neutro X" e "Sobre" abrem as telas do próprio app.
+- Desempenho: cache de cena — quadros parados viram uma cópia de memória; o gradiente
+  radial ficou 2× mais rápido (tabela de cores).

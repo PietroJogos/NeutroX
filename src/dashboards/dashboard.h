@@ -47,6 +47,8 @@ public:
     virtual bool load(Context& ctx, std::string& error) = 0;
     // Libera TODOS os recursos alocados em load().
     virtual void unload(Context& ctx) = 0;
+    // Estado interno resumido (para testes automatizados e log).
+    virtual std::string debugState() const { return ""; }
 
 private:
     DashboardId id_;
@@ -61,5 +63,6 @@ void drawMetroV2Preview(IRenderer& r, float time);
 
 // Fabricas.
 std::unique_ptr<Dashboard> createPlaceholderDashboard(DashboardId id);
+std::unique_ptr<Dashboard> createBladesDashboard();
 
 }  // namespace nx

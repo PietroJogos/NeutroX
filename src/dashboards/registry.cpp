@@ -5,7 +5,7 @@
 namespace nx {
 
 namespace {
-std::unique_ptr<Dashboard> mkBlades() { return createPlaceholderDashboard(DashboardId::Blades); }
+std::unique_ptr<Dashboard> mkBlades() { return createBladesDashboard(); }
 std::unique_ptr<Dashboard> mkNxe() { return createPlaceholderDashboard(DashboardId::Nxe); }
 std::unique_ptr<Dashboard> mkKinect() { return createPlaceholderDashboard(DashboardId::Kinect); }
 std::unique_ptr<Dashboard> mkMetroV1() { return createPlaceholderDashboard(DashboardId::MetroV1); }

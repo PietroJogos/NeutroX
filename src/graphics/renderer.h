@@ -71,6 +71,8 @@ public:
     // Texturas (pixels 0xAARRGGBB, alfa nao pre-multiplicado).
     virtual TextureId createTexture(int w, int h, const uint32_t* argb) = 0;
     virtual void destroyTexture(TextureId id) = 0;
+    // Substitui o conteudo de uma textura existente (mesmo tamanho). Retorna false se invalida.
+    virtual bool updateTexture(TextureId id, int w, int h, const uint32_t* argb) = 0;
     virtual void drawTexture(TextureId id, const Rectf& dst, float alpha = 1.0f) = 0;
     virtual int textureCount() const = 0;
     virtual size_t textureBytes() const = 0;
