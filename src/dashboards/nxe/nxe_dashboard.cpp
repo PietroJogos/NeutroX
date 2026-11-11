@@ -592,6 +592,7 @@ public:
     NxeDashboard() : Dashboard(DashboardId::Nxe) {}
 
     bool load(Context& ctx, std::string& error) override {
+        loadOptions(ctx);  // opcoes salvas desta interface
         if (!cache_.init(*ctx.renderer) || !rebuildBackground(ctx)) {
             error = "falha ao criar as texturas do NXE";
             return false;
@@ -603,7 +604,6 @@ public:
         if (bg_ != kInvalidTexture) ctx.renderer->destroyTexture(bg_);
         bg_ = kInvalidTexture;
         cache_.release(*ctx.renderer);
-        cacheBg_ = kInvalidTexture;
     }
 
     void onEnter(Context& ctx) override {
@@ -653,12 +653,24 @@ public:
 
     void render(Context& ctx, IRenderer& r) override {
         (void)ctx;
-        cache_.draw(r, animating(), version_, [this, &r](IRenderer& rr) { renderNxeStatic(rr, st_, &rr == &r ? bg_ : cacheBg_); });
+        cache_.draw(r, animating(), version_, [this](IRenderer& rr) { renderNxeStatic(rr, st_, bg_); });
         renderNxeLive(r, st_);
     }
 
 private:
     static constexpr float kWaveDur = 2.4f;
+
+    void loadOptions(Context& ctx) {
+        st_.theme = ctx.settings->opt("nxe.theme", 0, 0, kThemeCount - 1);
+        st_.showAvatar = ctx.settings->opt("nxe.avatar", 1, 0, 1) != 0;
+        st_.shirt = ctx.settings->opt("nxe.shirt", 0, 0, kShirtCount - 1);
+    }
+    void saveOptions(Context& ctx) {
+        ctx.settings->setOpt("nxe.theme", st_.theme);
+        ctx.settings->setOpt("nxe.avatar", st_.showAvatar ? 1 : 0);
+        ctx.settings->setOpt("nxe.shirt", st_.shirt);
+        ctx.app->saveSettings();
+    }
 
     bool animating() const {
         if (!enter_.done() || !chan_.settled() || !panelAnim_.settled() || !panelSel_.settled() || !panelScroll_.settled())
@@ -675,10 +687,6 @@ private:
         canvas.beginFrame();
         drawBackground(canvas, st_.theme);
         bg_ = r.createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        if (SoftRenderer* cv = cache_.canvas()) {
-            if (cacheBg_ != kInvalidTexture) cv->destroyTexture(cacheBg_);
-            cacheBg_ = cv->createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        }
         ++version_;
         return bg_ != kInvalidTexture;
     }
@@ -762,7 +770,7 @@ private:
         if (in.press(Button::A) && n > 0) {
             const InfoRow& row = st_.panel.rows[size_t(st_.panelSel)];
             if (row.action >= kRowShirt) {
-                st_.shirt = row.action - kRowShirt;
+                st_.shirt = row.action - kRowShirt; saveOptions(ctx);
                 ctx.sfx(Sfx::Confirm);
                 ctx.app->toast(std::string("Avatar: ") + row.title);
             } else if (row.action == kRowPlay) {
@@ -792,11 +800,11 @@ private:
         if (in.press(Button::Up)) { st_.optionsSel = (st_.optionsSel + 2) % 3; ctx.sfx(Sfx::Navigate); }
         int delta = (in.press(Button::Right) || in.press(Button::A)) ? 1 : (in.press(Button::Left) ? -1 : 0);
         if (delta != 0 && st_.optionsSel == 0) {
-            st_.theme = (st_.theme + delta + kThemeCount) % kThemeCount;
+            st_.theme = (st_.theme + delta + kThemeCount) % kThemeCount; saveOptions(ctx);
             rebuildBackground(ctx);
             ctx.sfx(Sfx::Tab);
         } else if (delta != 0 && st_.optionsSel == 1) {
-            st_.showAvatar = !st_.showAvatar;
+            st_.showAvatar = !st_.showAvatar; saveOptions(ctx);
             ctx.sfx(Sfx::Tab);
         } else if ((in.press(Button::A) && st_.optionsSel == 2) || in.press(Button::B) || in.press(Button::Y)) {
             st_.optionsOpen = false;
@@ -816,7 +824,7 @@ private:
     float waveT_ = 0;
     float clockTimer_ = 0;
     SceneCache cache_;
-    TextureId bg_ = kInvalidTexture, cacheBg_ = kInvalidTexture;
+    TextureId bg_ = kInvalidTexture;
     unsigned version_ = 1;
 };
 

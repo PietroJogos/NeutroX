@@ -542,6 +542,7 @@ public:
     KinectDashboard() : Dashboard(DashboardId::Kinect) {}
 
     bool load(Context& ctx, std::string& error) override {
+        loadOptions(ctx);  // opcoes salvas desta interface
         if (!cache_.init(*ctx.renderer) || !rebuildBackground(ctx)) {
             error = "falha ao criar as texturas do Kinect";
             return false;
@@ -553,7 +554,6 @@ public:
         if (bg_ != kInvalidTexture) ctx.renderer->destroyTexture(bg_);
         bg_ = kInvalidTexture;
         cache_.release(*ctx.renderer);
-        cacheBg_ = kInvalidTexture;
     }
 
     void onEnter(Context&) override {
@@ -601,11 +601,21 @@ public:
 
     void render(Context& ctx, IRenderer& r) override {
         (void)ctx;
-        cache_.draw(r, animating(), version_, [this, &r](IRenderer& rr) { renderKinectStatic(rr, st_, &rr == &r ? bg_ : cacheBg_); });
+        cache_.draw(r, animating(), version_, [this](IRenderer& rr) { renderKinectStatic(rr, st_, bg_); });
         renderKinectLive(r, st_);
     }
 
 private:
+    void loadOptions(Context& ctx) {
+        st_.theme = ctx.settings->opt("kinect.theme", 0, 0, kThemeCount - 1);
+        st_.showAvatar = ctx.settings->opt("kinect.avatar", 1, 0, 1) != 0;
+    }
+    void saveOptions(Context& ctx) {
+        ctx.settings->setOpt("kinect.theme", st_.theme);
+        ctx.settings->setOpt("kinect.avatar", st_.showAvatar ? 1 : 0);
+        ctx.app->saveSettings();
+    }
+
     bool animating() const {
         return !enter_.done() || !page_.settled() || !hlX_.settled() || !hlY_.settled() || !pop_.done() ||
                !detailAnim_.settled() || !detailScroll_.settled();
@@ -618,10 +628,6 @@ private:
         canvas.beginFrame();
         drawBackground(canvas, st_.theme);
         bg_ = r.createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        if (SoftRenderer* cv = cache_.canvas()) {
-            if (cacheBg_ != kInvalidTexture) cv->destroyTexture(cacheBg_);
-            cacheBg_ = cv->createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        }
         ++version_;
         return bg_ != kInvalidTexture;
     }
@@ -748,11 +754,11 @@ private:
         if (in.press(Button::Up)) { st_.optionsSel = (st_.optionsSel + 2) % 3; ctx.sfx(Sfx::Navigate); }
         int delta = (in.press(Button::Right) || in.press(Button::A)) ? 1 : (in.press(Button::Left) ? -1 : 0);
         if (delta != 0 && st_.optionsSel == 0) {
-            st_.theme = (st_.theme + delta + kThemeCount) % kThemeCount;
+            st_.theme = (st_.theme + delta + kThemeCount) % kThemeCount; saveOptions(ctx);
             rebuildBackground(ctx);
             ctx.sfx(Sfx::Tab);
         } else if (delta != 0 && st_.optionsSel == 1) {
-            st_.showAvatar = !st_.showAvatar;
+            st_.showAvatar = !st_.showAvatar; saveOptions(ctx);
             ctx.sfx(Sfx::Tab);
         } else if ((in.press(Button::A) && st_.optionsSel == 2) || in.press(Button::B) || in.press(Button::Y)) {
             st_.optionsOpen = false;
@@ -770,7 +776,7 @@ private:
     Smooth detailScroll_{0, 14};
     Smooth optionsAnim_{0, 16};
     SceneCache cache_;
-    TextureId bg_ = kInvalidTexture, cacheBg_ = kInvalidTexture;
+    TextureId bg_ = kInvalidTexture;
     unsigned version_ = 1;
 };
 

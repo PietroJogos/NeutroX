@@ -4,6 +4,7 @@
 // pasta de dados do aplicativo informada pela plataforma. Nenhuma
 // configuracao do sistema/dashboard original e lida ou alterada.
 #pragma once
+#include <map>
 #include <string>
 
 namespace nx {
@@ -21,6 +22,16 @@ struct Settings {
     bool showFps = false;
     // Sons dos dashboards: 0 = originais (pasta local), 1 = recriados pelo Neutro X.
     int dashboardSounds = 0;
+    // Opcoes de cada interface (fundo, avatar, cores...), chave "<dashboard>.<opcao>".
+    // Gravadas como linhas "opt.<chave>=<inteiro>".
+    std::map<std::string, int> dashOptions;
+
+    int opt(const std::string& key, int def, int lo, int hi) const {
+        auto it = dashOptions.find(key);
+        if (it == dashOptions.end()) return def;
+        return it->second < lo ? lo : (it->second > hi ? hi : it->second);
+    }
+    void setOpt(const std::string& key, int value) { dashOptions[key] = value; }
 
     static Settings defaults() { return Settings(); }
     void sanitize();  // corrige valores fora da faixa

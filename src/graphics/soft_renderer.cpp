@@ -484,6 +484,14 @@ TextureId SoftRenderer::createTexture(int w, int h, const uint32_t* argb) {
 
 void SoftRenderer::destroyTexture(TextureId id) { textures_.erase(id); }
 
+bool SoftRenderer::captureTexture(TextureId id) {
+    auto it = textures_.find(id);
+    if (it == textures_.end() || it->second.w != w_ || it->second.h != h_) return false;
+    std::memcpy(it->second.px.data(), fb_.data(), fb_.size() * sizeof(uint32_t));
+    it->second.opaque = true;  // o framebuffer e sempre opaco
+    return true;
+}
+
 bool SoftRenderer::updateTexture(TextureId id, int w, int h, const uint32_t* argb) {
     auto it = textures_.find(id);
     if (it == textures_.end() || !argb || it->second.w != w || it->second.h != h) return false;

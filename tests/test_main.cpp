@@ -1182,6 +1182,203 @@ static void testMetroV2() {
     CHECK(h.plat.renderer().textureCount() == 0);
 }
 
+// ---------------------------------------------------------------- Fase 9
+
+static void testOptionPersistence() {
+    section("Fase 9: opcoes de cada interface persistem entre execucoes");
+    Settings parsed;
+    CHECK(parseSettings("opt.nxe.theme=2\nopt.kinect.avatar=0\n", parsed) == LoadResult::Ok);
+    CHECK(parsed.opt("nxe.theme", 0, 0, 3) == 2 && parsed.opt("kinect.avatar", 1, 0, 1) == 0);
+    CHECK(parsed.opt("nxe.theme", 0, 0, 1) == 1);  // limitado ao intervalo pedido
+    Settings bad;
+    CHECK(parseSettings("opt.nxe.theme=3\nopt.BAD KEY=1\nopt.x=999999\nopt.=1\n", bad) == LoadResult::Corrupt);
+    CHECK(bad.opt("nxe.theme", 0, 0, 3) == 3 && bad.dashOptions.size() == 1);
+    Settings rt;
+    rt.setOpt("metro2.accent", 2);
+    Settings back;
+    CHECK(parseSettings(serializeSettings(rt), back) == LoadResult::Ok && back.opt("metro2.accent", 0, 0, 2) == 2);
+
+    std::string dir = tempDir("persist");
+    {
+        Harness h(dir);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        h.app.openDashboard(DashboardId::Nxe);
+        h.waitIdle();
+        h.tap(Button::Y);
+        h.tap(Button::A);
+        h.tap(Button::A);  // tema 2
+        h.tap(Button::Down);
+        h.tap(Button::A);  // oculta avatar
+        h.tap(Button::B);
+        h.app.openDashboard(DashboardId::Blades);
+        h.waitIdle();
+        h.tap(Button::Y);
+        h.tap(Button::A);  // grafite
+        h.tap(Button::B);
+        h.app.openDashboard(DashboardId::MetroV2);
+        h.waitIdle();
+        h.tap(Button::Y);
+        h.tap(Button::Down);
+        h.tap(Button::A);
+        h.tap(Button::A);  // destaque laranja
+        h.tap(Button::B);
+        h.app.shutdown();
+    }
+    {
+        Harness h(dir);  // "reinicia" o aplicativo
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        h.app.openDashboard(DashboardId::Nxe);
+        h.waitIdle();
+        CHECK(has(h.app.topDebugState(), "theme=2 avatar=0"));
+        h.app.openDashboard(DashboardId::Blades);
+        h.waitIdle();
+        CHECK(has(h.app.topDebugState(), "graphite=1"));
+        h.app.openDashboard(DashboardId::MetroV2);
+        h.waitIdle();
+        CHECK(has(h.app.topDebugState(), "accent=2"));
+        h.shot("70_persistencia_metro2_laranja");
+        // Restaurar padroes limpa tambem as opcoes das interfaces
+        h.app.settings() = Settings::defaults();
+        h.app.saveSettings();
+        h.app.openDashboard(DashboardId::Nxe);
+        h.waitIdle();
+        CHECK(has(h.app.topDebugState(), "theme=0 avatar=1"));
+        h.app.shutdown();
+    }
+}
+
+static void testSoak() {
+    section("Fase 9: teste de resistencia (entradas aleatorias em todas as telas)");
+    Harness h(tempDir("soak"));
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    StrokeFont::instance().clearCache();
+    h.step(0, 2);
+    StrokeFont::instance().clearCache();
+    long long baseHeap = g_liveBytes.load();
+    int baseTex = h.plat.renderer().textureCount();
+    int errorsBefore = logErrorCount();
+    uint32_t seed = 0x9E3779B9u;
+    auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+    const Button pool[] = {Button::Up, Button::Down, Button::Left, Button::Right, Button::A, Button::B, Button::X,
+                           Button::Y, Button::LB, Button::RB, Button::Start, Button::Up, Button::Down, Button::Right};
+    const int poolN = int(sizeof(pool) / sizeof(pool[0]));
+    int maxScreens = 0, maxTex = 0, disconnects = 0, quits = 0, dashOpens = 0;
+    size_t maxTexBytes = 0;
+    const int kSteps = 6000;  // ~6000 acoes, ~21000 quadros (~6 min simulados)
+    for (int i = 0; i < kSteps; ++i) {
+        std::string top = h.app.topScreenName();
+        Button b = pool[rnd() % poolN];
+        if (top == "Dialog") b = Button::B;  // nunca confirma sair/restaurar
+        if (i % 600 == 300) {
+            // abre um dashboard aleatorio pelo fluxo normal
+            h.app.openDashboard(DashboardId(rnd() % kDashboardCount));
+            h.waitIdle();
+            ++dashOpens;
+        } else if (i % 997 == 500) {
+            // controle desconectado por meio segundo no meio do uso
+            RawPadState s;
+            s.connected = false;
+            s.buttons = bit(b);
+            for (int k = 0; k < 30; ++k) { h.plat.advance(1.0 / 60); h.app.frame(s, 1.0f / 60); }
+            ++disconnects;
+        } else {
+            h.step(bit(b), 1);
+            h.step(0, 1 + int(rnd() % 4));
+        }
+        if (h.app.quitRequested()) { ++quits; break; }
+        maxScreens = std::max(maxScreens, h.app.screenCount());
+        maxTex = std::max(maxTex, h.plat.renderer().textureCount());
+        maxTexBytes = std::max(maxTexBytes, h.plat.renderer().textureBytes());
+    }
+    std::printf("  %d acoes, %llu quadros, %d aberturas diretas de dashboard, %d desconexoes\n", kSteps,
+                static_cast<unsigned long long>(h.app.stats().frames), dashOpens, disconnects);
+    std::printf("  pilha maxima: %d telas; texturas maximas: %d (%.1f MB)\n", maxScreens, maxTex, maxTexBytes / 1048576.0);
+    CHECK(quits == 0);
+    CHECK(maxScreens <= 4);
+    CHECK(maxTex <= 16);
+    CHECK(logErrorCount() == errorsBefore);
+    // Volta ao menu e confere memoria
+    h.app.openMainMenu();
+    h.waitIdle();
+    StrokeFont::instance().clearCache();
+    h.step(0, 2);
+    StrokeFont::instance().clearCache();
+    long long endHeap = g_liveBytes.load();
+    std::printf("  heap no menu: antes %.1f KB, depois %.1f KB (dif %+lld bytes)\n", baseHeap / 1024.0, endHeap / 1024.0,
+                endHeap - baseHeap);
+    CHECK(h.plat.renderer().textureCount() == baseTex);
+    CHECK(std::llabs(endHeap - baseHeap) < 64 * 1024);  // opcoes salvas e textos de aviso sao pequenos
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
+static void testUnwritableData() {
+    section("Fase 9: pasta de dados sem permissao de escrita");
+    // Um caminho "dentro de um arquivo" nunca pode ser criado nem gravado.
+    std::string dir = tempDir("unwritable");
+    FILE* f = std::fopen((dir + "arquivo").c_str(), "wb");
+    if (f) { std::fputs("x", f); std::fclose(f); }
+    Harness h(dir + "arquivo/");
+    int errBefore = logErrorCount();
+    CHECK(h.app.init());  // inicia mesmo assim, com padroes
+    h.idle(3.0f);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+    CHECK(!h.app.saveSettings());  // falha informada, sem travar
+    CHECK(logErrorCount() > errBefore);
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h.app.openDashboard(DashboardId(d));
+        h.waitIdle();
+        CHECK(h.app.hasActiveDashboard() && int(h.app.activeDashboard()) == d);
+        h.tap(Button::Y);  // mudar uma opcao tenta salvar: falha tratada
+        h.tap(Button::A);
+        h.tap(Button::B);
+        h.step(0, 20);
+    }
+    CHECK(std::string(h.app.topScreenName()) != "");
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+}
+
+static void testMemoryReport() {
+    section("Fase 9: memoria por interface (heap + texturas, 720p e 1080p)");
+    const int res[2][2] = {{1280, 720}, {1920, 1080}};
+    for (const auto& rs : res) {
+        Harness h(tempDir("memory"), rs[0], rs[1]);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        StrokeFont::instance().clearCache();
+        h.step(0, 2);
+        StrokeFont::instance().clearCache();
+        long long menuHeap = g_liveBytes.load();
+        size_t menuTex = h.plat.renderer().textureBytes();
+        std::printf("  %dx%d menu: heap %.1f MB, texturas %.1f MB\n", rs[0], rs[1], menuHeap / 1048576.0, menuTex / 1048576.0);
+        for (int d = 0; d < kDashboardCount; ++d) {
+            h.app.openDashboard(DashboardId(d));
+            h.waitIdle();
+            h.idle(1.0f);
+            StrokeFont::instance().clearCache();
+            h.step(0, 2);
+            StrokeFont::instance().clearCache();
+            long long heap = g_liveBytes.load();
+            size_t tex = h.plat.renderer().textureBytes();
+            std::printf("  %dx%d %-9s heap %.1f MB (%+.1f), texturas %.1f MB (%+.1f)\n", rs[0], rs[1],
+                        dashboardInfo(DashboardId(d)).name, heap / 1048576.0, (heap - menuHeap) / 1048576.0, tex / 1048576.0,
+                        (double(tex) - double(menuTex)) / 1048576.0);
+            // So o fundo e o cache da interface (2 quadros) alem das previas
+            CHECK(double(tex) - double(menuTex) <= 2.0 * rs[0] * rs[1] * 4 + 1024);
+        }
+        h.app.shutdown();
+    }
+}
+
 static void testSwitchStressAndMemory() {
     section("Troca repetida de dashboard (100x) e memoria");
     Harness h(tempDir("stress"));
@@ -1365,8 +1562,8 @@ static void testPerformance() {
 
     // Pior caso realista: o dashboard Blades AO VIVO durante a animacao de troca
     // de lamina. Usa a mediana por quadro (resistente a ruido da maquina).
-    auto liveBench = [](DashboardId id, const char* label, Button fwd, Button back) {
-        Harness h(tempDir("perf_live"), 1280, 720);
+    auto liveBench = [](DashboardId id, const char* label, Button fwd, Button back, int w = 1280, int hgt = 720) {
+        Harness h(tempDir("perf_live"), w, hgt);
         h.app.init();
         h.idle(3.0f);
         h.waitIdle();
@@ -1384,8 +1581,8 @@ static void testPerformance() {
         }
         std::sort(ft.begin(), ft.end());
         double med = ft[ft.size() / 2], p90 = ft[ft.size() * 9 / 10];
-        std::printf("  %s ao vivo (720p): mediana %.2f ms, p90 %.2f ms\n", label, med, p90);
-        CHECK(med < 16.7);
+        std::printf("  %s ao vivo (%dp): mediana %.2f ms, p90 %.2f ms\n", label, hgt, med, p90);
+        if (hgt <= 720) CHECK(med < 16.7);  // 1080p: somente informativo
         h.app.shutdown();
     };
     liveBench(DashboardId::Blades, "Blades troca de lamina", Button::RB, Button::LB);
@@ -1397,6 +1594,11 @@ static void testPerformance() {
     liveBench(DashboardId::MetroV1, "Metro V1 borda entre blocos", Button::Right, Button::Left);
     liveBench(DashboardId::MetroV2, "Metro V2 troca de categoria", Button::RB, Button::LB);
     liveBench(DashboardId::MetroV2, "Metro V2 navegacao entre blocos", Button::Right, Button::Left);
+    liveBench(DashboardId::Blades, "Blades troca de lamina", Button::RB, Button::LB, 1920, 1080);
+    liveBench(DashboardId::Nxe, "NXE troca de canal", Button::Down, Button::Up, 1920, 1080);
+    liveBench(DashboardId::Kinect, "Kinect deslize de pagina", Button::RB, Button::LB, 1920, 1080);
+    liveBench(DashboardId::MetroV1, "Metro V1 troca de categoria", Button::RB, Button::LB, 1920, 1080);
+    liveBench(DashboardId::MetroV2, "Metro V2 troca de categoria", Button::RB, Button::LB, 1920, 1080);
 }
 
 int main(int argc, char** argv) {
@@ -1422,7 +1624,11 @@ int main(int argc, char** argv) {
     testSwitchStressAndMemory();
     testErrorRecovery();
     testCorruptSettingsAtStartup();
+    testOptionPersistence();
+    testSoak();
+    testMemoryReport();
     testPerformance();
+    testUnwritableData();
     std::printf("\nResultado: %d verificacoes aprovadas, %d falharam\n", g_pass, g_fail);
     logSetFile("");
     return g_fail == 0 ? 0 : 1;

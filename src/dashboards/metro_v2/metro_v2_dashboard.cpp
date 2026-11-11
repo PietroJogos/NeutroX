@@ -645,6 +645,7 @@ public:
     MetroV2Dashboard() : Dashboard(DashboardId::MetroV2) {}
 
     bool load(Context& ctx, std::string& error) override {
+        loadOptions(ctx);  // opcoes salvas desta interface
         if (!cache_.init(*ctx.renderer) || !rebuildBackground(ctx)) {
             error = "falha ao criar as texturas do Metro V2";
             return false;
@@ -656,7 +657,6 @@ public:
         if (bg_ != kInvalidTexture) ctx.renderer->destroyTexture(bg_);
         bg_ = kInvalidTexture;
         cache_.release(*ctx.renderer);
-        cacheBg_ = kInvalidTexture;
     }
 
     void onEnter(Context& ctx) override {
@@ -733,10 +733,20 @@ public:
 
     void render(Context& ctx, IRenderer& r) override {
         (void)ctx;
-        cache_.draw(r, animating(), version_, [this, &r](IRenderer& rr) { renderMetroV2(rr, st_, &rr == &r ? bg_ : cacheBg_); });
+        cache_.draw(r, animating(), version_, [this](IRenderer& rr) { renderMetroV2(rr, st_, bg_); });
     }
 
 private:
+    void loadOptions(Context& ctx) {
+        st_.bg = ctx.settings->opt("metro2.bg", 0, 0, 1);
+        st_.accent = ctx.settings->opt("metro2.accent", 0, 0, kAccentCount - 1);
+    }
+    void saveOptions(Context& ctx) {
+        ctx.settings->setOpt("metro2.bg", st_.bg);
+        ctx.settings->setOpt("metro2.accent", st_.accent);
+        ctx.app->saveSettings();
+    }
+
     bool animating() const {
         return !enter_.done() || !page_.settled() || !pageEnter_.done() || !hx_.settled() || !hy_.settled() || !hw_.settled() ||
                !hh_.settled() || !ulX_.settled() || !ulW_.settled() || !libAnim_.settled() || !lx_.settled() || !ly_.settled() ||
@@ -750,10 +760,6 @@ private:
         canvas.beginFrame();
         drawBackground(canvas, st_.bg);
         bg_ = r.createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        if (SoftRenderer* cv = cache_.canvas()) {
-            if (cacheBg_ != kInvalidTexture) cv->destroyTexture(cacheBg_);
-            cacheBg_ = cv->createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        }
         ++version_;
         return bg_ != kInvalidTexture;
     }
@@ -977,11 +983,11 @@ private:
         if (in.press(Button::Up)) { st_.optionsSel = (st_.optionsSel + 2) % 3; ctx.sfx(Sfx::Navigate); }
         int delta = (in.press(Button::Right) || in.press(Button::A)) ? 1 : (in.press(Button::Left) ? -1 : 0);
         if (delta != 0 && st_.optionsSel == 0) {
-            st_.bg = (st_.bg + 1) % 2;
+            st_.bg = (st_.bg + 1) % 2; saveOptions(ctx);
             rebuildBackground(ctx);
             ctx.sfx(Sfx::Tab);
         } else if (delta != 0 && st_.optionsSel == 1) {
-            st_.accent = (st_.accent + delta + kAccentCount) % kAccentCount;
+            st_.accent = (st_.accent + delta + kAccentCount) % kAccentCount; saveOptions(ctx);
             ctx.sfx(Sfx::Tab);
         } else if ((in.press(Button::A) && st_.optionsSel == 2) || in.press(Button::B) || in.press(Button::Y)) {
             st_.optionsOpen = false;
@@ -1004,7 +1010,7 @@ private:
     float clockTimer_ = 0;
     bool ulDirty_ = false;
     SceneCache cache_;
-    TextureId bg_ = kInvalidTexture, cacheBg_ = kInvalidTexture;
+    TextureId bg_ = kInvalidTexture;
     unsigned version_ = 1;
 };
 

@@ -11,8 +11,8 @@
 | 6 | Kinect: cartões, layout, transições | ✅ Concluída (11/11/2026) |
 | 7 | Metro V1: blocos, categorias, animações | ✅ Concluída (11/11/2026) |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ✅ Concluída (11/11/2026) |
-| 9 | Integração, memória, estabilidade, desempenho | ⏳ Próxima (base já testada a cada fase) |
-| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | Pendente — depende da cadeia xsdk |
+| 9 | Integração, memória, estabilidade, desempenho | ✅ Concluída (11/11/2026) |
+| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | ⏳ Próxima — depende da cadeia xsdk (autorização) |
 
 Política de releases: toda versão é publicada como **pré-release (beta)** até a Fase 10
 terminar; só então uma versão é marcada como *Latest*.
@@ -110,3 +110,17 @@ terminar; só então uma versão é marcada como *Latest*.
   todo texto da interface tem glifo; o dashboard provisório (não mais usado) foi removido.
 
 **Com a Fase 8, as cinco interfaces estão completas.**
+## Fase 9 — resultado (integração e otimização)
+- **Memória**: o cache de cena passou a capturar o próprio quadro (`captureTexture`) em
+  vez de manter uma tela fora da tela e uma cópia duplicada do fundo. Cada interface agora
+  custa **+3,5 MB em 720p / +7,9 MB em 1080p** acima do menu (antes ≈ +10,5 / +23,7 MB).
+- **Integração**: as opções de cada interface (fundos, avatar, camiseta, cores, relógio)
+  são gravadas em `neutrox.ini` (`opt.<interface>.<opção>`) e restauradas ao reabrir;
+  "Restaurar padrões" também as limpa.
+- **Resistência**: teste com 6.000 ações aleatórias (~21.600 quadros) em todas as telas,
+  com desconexões do controle — sem erros, pilha máxima de 3 telas e memória de volta ao
+  valor inicial.
+- **Erros**: pasta de dados sem permissão de escrita — o app inicia, todas as interfaces
+  abrem e as falhas de gravação são registradas sem travar.
+- **Desempenho**: medições ao vivo de todas as animações em 720p e 1080p; relatório de
+  memória por interface.

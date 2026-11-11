@@ -571,6 +571,7 @@ public:
     BladesDashboard() : Dashboard(DashboardId::Blades) {}
 
     bool load(Context& ctx, std::string& error) override {
+        loadOptions(ctx);  // opcoes salvas desta interface
         if (!cache_.init(*ctx.renderer) || !rebuildBackground(ctx)) {
             error = "falha ao criar as texturas do Blades";
             return false;
@@ -581,8 +582,7 @@ public:
     void unload(Context& ctx) override {
         if (st_.bg != kInvalidTexture) ctx.renderer->destroyTexture(st_.bg);
         st_.bg = kInvalidTexture;
-        cache_.release(*ctx.renderer);  // libera o canvas e suas texturas
-        cacheBg_ = kInvalidTexture;
+        cache_.release(*ctx.renderer);
     }
 
     void onEnter(Context& ctx) override {
@@ -633,10 +633,20 @@ public:
     void render(Context& ctx, IRenderer& r) override {
         (void)ctx;
         // Ao vivo usa a textura de fundo do renderizador principal; em cache, a copia do canvas.
-        cache_.draw(r, animating(), version_, [this, &r](IRenderer& rr) { renderBlades(rr, st_, &rr == &r ? st_.bg : cacheBg_); });
+        cache_.draw(r, animating(), version_, [this](IRenderer& rr) { renderBlades(rr, st_, st_.bg); });
     }
 
 private:
+    void loadOptions(Context& ctx) {
+        st_.graphite = ctx.settings->opt("blades.graphite", 0, 0, 1) != 0;
+        st_.showClock = ctx.settings->opt("blades.clock", 1, 0, 1) != 0;
+    }
+    void saveOptions(Context& ctx) {
+        ctx.settings->setOpt("blades.graphite", st_.graphite ? 1 : 0);
+        ctx.settings->setOpt("blades.clock", st_.showClock ? 1 : 0);
+        ctx.app->saveSettings();
+    }
+
     bool animating() const {
         if (!enter_.done() || !feature_.done() || !pos_.settled() || !detailAnim_.settled() || !detailSelAnim_.settled() ||
             !detailScroll_.settled() || !optionsAnim_.settled())
@@ -653,10 +663,6 @@ private:
         canvas.beginFrame();
         drawBackground(canvas, st_.graphite);
         st_.bg = r.createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        if (SoftRenderer* cv = cache_.canvas()) {
-            if (cacheBg_ != kInvalidTexture) cv->destroyTexture(cacheBg_);
-            cacheBg_ = cv->createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
-        }
         ++version_;
         return st_.bg != kInvalidTexture;
     }
@@ -772,11 +778,11 @@ private:
         if (in.press(Button::Up)) { st_.optionsSel = (st_.optionsSel + 2) % 3; ctx.sfx(Sfx::Navigate); }
         bool toggle = in.press(Button::A) || in.press(Button::Left) || in.press(Button::Right);
         if (toggle && st_.optionsSel == 0) {
-            st_.graphite = !st_.graphite;
+            st_.graphite = !st_.graphite; saveOptions(ctx);
             rebuildBackground(ctx);
             ctx.sfx(Sfx::Tab);
         } else if (toggle && st_.optionsSel == 1) {
-            st_.showClock = !st_.showClock;
+            st_.showClock = !st_.showClock; saveOptions(ctx);
             ctx.sfx(Sfx::Tab);
         } else if ((in.press(Button::A) && st_.optionsSel == 2) || in.press(Button::B) || in.press(Button::Y)) {
             st_.optionsOpen = false;
@@ -796,7 +802,6 @@ private:
     Smooth optionsAnim_{0, 16};
     float clockTimer_ = 0;
     SceneCache cache_;
-    TextureId cacheBg_ = kInvalidTexture;
     unsigned version_ = 1;
 };
 

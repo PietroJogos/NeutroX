@@ -79,6 +79,7 @@ std::string serializeSettings(const Settings& s) {
     o << "language=" << s.language << "\n";
     o << "show_fps=" << (s.showFps ? 1 : 0) << "\n";
     o << "dashboard_sounds=" << (s.dashboardSounds == 1 ? "recriados" : "originais") << "\n";
+    for (const auto& kv : s.dashOptions) o << "opt." << kv.first << "=" << kv.second << "\n";
     return o.str();
 }
 
@@ -104,6 +105,14 @@ LoadResult parseSettings(const std::string& text, Settings& out) {
         else if (k == "language") { if (v != "pt-BR") bad = true; }
         else if (k == "show_fps") { if (parseBool(v, b)) s.showFps = b; else bad = true; }
         else if (k == "dashboard_sounds") { if (v == "originais") s.dashboardSounds = 0; else if (v == "recriados") s.dashboardSounds = 1; else bad = true; }
+        else if (k.compare(0, 4, "opt.") == 0) {
+            std::string name = k.substr(4);
+            bool okName = !name.empty() && name.size() <= 40;
+            for (char ch : name)
+                if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_')) okName = false;
+            if (okName && parseInt(v, n) && n >= -1000 && n <= 1000 && s.dashOptions.size() < 64) s.dashOptions[name] = n;
+            else bad = true;
+        }
         // chaves desconhecidas sao ignoradas (compatibilidade futura)
     }
     s.sanitize();

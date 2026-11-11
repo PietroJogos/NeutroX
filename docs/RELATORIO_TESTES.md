@@ -1,9 +1,9 @@
-# Relatório de testes — 0.6.0-beta
+# Relatório de testes — 0.7.0-beta
 
 Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
 
-**Resultado: 908 verificações aprovadas, 0 falharam.**
+**Resultado: 946 verificações aprovadas, 0 falharam.**
 
 | # | Teste obrigatório | Como foi verificado | Resultado |
 |---|---|---|---|
@@ -20,6 +20,9 @@ Comando: `build/Release/neutrox_tests.exe build/test_output`
 | — | Controle desconectado | 2 s desconectado dentro de um dashboard, aviso exibido, sem travar; reconexão | ✅ |
 | — | Sons por versão | Tema muda com o dashboard; menu START usa sons do Neutro X; WAV/XMA/mapeamento; ausente = mudo | ✅ |
 | — | Resoluções | 1280×720, 1920×1080 (escala 1,5) e 640×480 (barras) | ✅ |
+| — | **Resistência (Fase 9)** | 6.000 ações aleatórias com semente fixa (~21.600 quadros) em todas as telas, 10 aberturas diretas de interface, 6 desconexões do controle: **0 erros**, pilha máxima de 3 telas, até 13 texturas; ao voltar ao menu, texturas iguais e heap +1 KB (opções salvas) | ✅ |
+| — | **Opções persistentes (Fase 9)** | Tema/avatar do NXE, grafite do Blades e destaque do Metro V2 sobrevivem a reinício; chaves inválidas rejeitadas; "restaurar padrões" limpa | ✅ |
+| — | **Pasta sem escrita (Fase 9)** | Inicia com padrões, as 5 interfaces abrem, mudar opções tenta salvar e a falha é registrada sem travar | ✅ |
 | — | **Metro V2 (Fase 8)** | Navegação espacial e bordas, painéis de informações locais, biblioteca (limites da grade, tela do jogo, "jogar" não executa, **8 filtros com contagens 8/2/…/3/8**), atalhos de configurações, fixar, opções sem vazar textura, **os 45 blocos executam sua ação e voltam ao estado inicial**, nenhum erro registrado | ✅ |
 | — | Texto da interface | `tools/glyph_check.py`: todo caractere usado nos textos tem glifo na fonte própria (encontrou e corrigiu "×") | ✅ |
 | — | **Metro V1 (Fase 7)** | Navegação espacial (2×2 → 1×1, borda → categoria e volta pelo bloco mais à direita), limites, LB/RB, páginas demonstrativas, blocos que abrem Configurações/Sobre/Sons, fixar, opções sem vazar textura, **os 46 blocos das 8 categorias executam sua ação e voltam**, nenhum erro registrado | ✅ |
@@ -51,8 +54,34 @@ Pior caso realista, ao vivo durante animações (720p):
 | Kinect — destaque na grade | 3,3 ms | 3,7 ms |
 | Metro V1 — troca de categoria | 2,2 ms | 3,1 ms |
 | Metro V1 — borda entre blocos | 1,9 ms | 2,2 ms |
-| Metro V2 — troca de categoria | 2,6 ms | 3,3 ms |
-| Metro V2 — navegação entre blocos | 2,0 ms | 2,5 ms |
+| Metro V2 — troca de categoria | 2,6 ms | 3,8 ms |
+| Metro V2 — navegação entre blocos | 2,1 ms | 2,9 ms |
+
+Em **1080p**, ao vivo (somente informativo):
+
+| Animação | Mediana | p90 |
+|---|---:|---:|
+| Blades — troca de lâmina | 15,2 ms | 19,4 ms |
+| NXE — troca de canal | **22,2 ms** | 31,1 ms |
+| Kinect — deslize de página | 13,9 ms | 17,3 ms |
+| Metro V1 — troca de categoria | 5,9 ms | 8,8 ms |
+| Metro V2 — troca de categoria | 6,0 ms | 9,2 ms |
+
+Em 1080p, a troca de canal do NXE fica abaixo de 60 FPS no PC (≈45 FPS durante a
+animação, que dura ~0,3 s); os quadros parados continuam vindo do cache.
+
+## Memória por interface (Fase 9)
+
+Heap total e texturas com a interface aberta (o menu é descarregado):
+
+| Resolução | Menu | Cada interface | Diferença |
+|---|---:|---:|---:|
+| 1280×720 | 13,4 MB (8,2 MB texturas) | 16,9 MB (11,7 MB texturas) | **+3,5 MB** |
+| 1920×1080 | 22,2 MB (12,6 MB texturas) | 30,1 MB (20,5 MB texturas) | **+7,9 MB** |
+
+A diferença de heap é igual à de texturas: cada interface guarda só o fundo e o cache de
+cena. Antes da Fase 9 o cache usava uma tela fora da tela e uma cópia do fundo (≈ +7 MB a
+mais por interface em 720p).
 
 Com a interface parada, o quadro vem do cache de cena (cópia de memória); no NXE só o
 avatar é desenhado ao vivo por cima.

@@ -51,6 +51,7 @@ public:
     TextureId createTexture(int w, int h, const uint32_t* argb) override;
     void destroyTexture(TextureId id) override;
     bool updateTexture(TextureId id, int w, int h, const uint32_t* argb) override;
+    bool captureTexture(TextureId id) override;
     void drawTexture(TextureId id, const Rectf& dst, float alpha = 1.0f) override;
     int textureCount() const override { return int(textures_.size()); }
     size_t textureBytes() const override;

@@ -1,4 +1,4 @@
-# Limitações conhecidas (versão 0.6.0-beta)
+# Limitações conhecidas (versão 0.7.0-beta)
 
 ## Plataforma
 - **Não existe executável para o Xbox 360 ainda.** Nenhuma ferramenta desta máquina gera
@@ -6,12 +6,13 @@
   o que depende da sua autorização. Ver [TOOLCHAIN.md](TOOLCHAIN.md).
 - **Nada foi testado em hardware.** Não há declaração de compatibilidade com o console,
   o Aurora ou o RGH até um teste real.
-- O renderizador é em software. No PC sobra folga (≈1–5 ms por quadro em 720p); no
-  processador do Xbox 360 o custo será maior. O caminho por GPU está planejado.
+- O renderizador é em software. No PC sobra folga em 720p (≈1–10 ms por quadro); em 1080p
+  a troca de canal do NXE fica em ≈22 ms (≈45 FPS durante a animação). No processador do
+  Xbox 360 o custo será maior. O caminho por GPU está planejado (Fase 10).
 
 ## Interfaces
 - **As cinco interfaces estão completas (Fases 4–8).**
-- Opções da interface, favoritos e blocos fixados valem só durante a sessão.
+- As opções de cada interface são salvas; **favoritos e blocos fixados** valem só durante a sessão.
 - Quadros com animação são desenhados ao vivo pelo renderizador em software; no PC ficam
   abaixo de 16,7 ms em 720p, mas no Xbox 360 exigirão o caminho por GPU (Fase 10).
 - Kinect: sem reconhecimento corporal; a interface funciona só com o controle.

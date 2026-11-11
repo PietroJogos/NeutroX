@@ -63,8 +63,12 @@ Cada interface é um `Dashboard` (`src/dashboards/<nome>/<nome>_dashboard.cpp`) 
 
 - **Estado + funções de desenho puras**: o mesmo código desenha o dashboard ao vivo e a
   miniatura do menu (`drawXxxPreview`), então a prévia sempre corresponde à interface.
-- **Cache de cena** (`graphics/scene_cache.h`): enquanto nada anima, o quadro é uma cópia
-  de memória; elementos que animam sempre (avatar) ficam numa camada ao vivo por cima.
+- **Cache de cena** (`graphics/scene_cache.h`): quando a cena para, o quadro desenhado é
+  capturado para uma única textura (`IRenderer::captureTexture`); enquanto nada anima, o
+  quadro é só uma cópia de memória. Elementos que animam sempre (avatar) ficam numa camada
+  ao vivo por cima. Numa GPU, a captura corresponde a "resolver" o alvo para textura.
+- **Opções persistentes**: cada interface lê/grava suas opções em `Settings::dashOptions`
+  (`opt.<interface>.<opção>` no `neutrox.ini`).
 - **Conteúdo de demonstração compartilhado** (`dashboards/common/demo_content.*`): jogos,
   amigos, mídias e perfil fictícios, usados por todas as interfaces e pela biblioteca.
 - **Ganchos de teste**: `debugState()` e `debugSelect()` permitem que os testes verifiquem a
@@ -107,3 +111,5 @@ Cada interface é um `Dashboard` (`src/dashboards/<nome>/<nome>_dashboard.cpp`) 
   ficam em 640×360 e 160×90 (~5,1 MB no total).
 - Teste de estresse: 100 trocas de dashboard → heap e texturas voltam exatamente ao valor
   inicial.
+- Custo por interface carregada: fundo + cache = 2 quadros na resolução real
+  (+3,5 MB em 720p, +7,9 MB em 1080p acima do menu).

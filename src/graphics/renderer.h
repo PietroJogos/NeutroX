@@ -73,6 +73,9 @@ public:
     virtual void destroyTexture(TextureId id) = 0;
     // Substitui o conteudo de uma textura existente (mesmo tamanho). Retorna false se invalida.
     virtual bool updateTexture(TextureId id, int w, int h, const uint32_t* argb) = 0;
+    // Copia o quadro atual (resolucao real) para uma textura do mesmo tamanho.
+    // Usado pelo cache de cena; numa GPU corresponde a "resolver" o alvo para textura.
+    virtual bool captureTexture(TextureId id) = 0;
     virtual void drawTexture(TextureId id, const Rectf& dst, float alpha = 1.0f) = 0;
     virtual int textureCount() const = 0;
     virtual size_t textureBytes() const = 0;
