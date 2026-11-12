@@ -11,10 +11,10 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: 0.9.1-beta, Fase 10.** A revisão incorpora o log do Xbox 360 da versão
-> 0.9.0. Há uma compilação XEX e um pacote local com os sons verificados do Metro V2.
-> O próximo teste em hardware está descrito no [roteiro de instalação](docs/INSTALACAO_XBOX.md).
-> Consulte o [relatório da revisão](docs/RELATORIO_091.md) para conferir os resultados no PC.
+> **Status: 0.9.2-beta, Fase 10.** O importador processa ZIPs, XEX em texto
+> claro e recursos avulsos por versão. A pasta USB local inclui os áudios
+> verificados do seu acervo. Consulte o [relatório de áudio](docs/RELATORIO_AUDIO_092.md)
+> para preparar o pacote e testar no Xbox.
 
 | Novidade 0.9.0 | Documento |
 |---|---|

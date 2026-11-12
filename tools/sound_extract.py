@@ -1,43 +1,13 @@
 #!/usr/bin/env python3
-"""
-sound_extract.py - Inspecao e extracao em lote dos sons ORIGINAIS dos dashboards (uso local).
+"""Inventaria ZIPs, XEX2 e recursos locais dos cinco dashboards.
 
-Para cada arquivo .xex informado (ou encontrado na pasta de entrada):
-  1. Le o cabecalho XEX2 (texto claro): versao pelo Execution ID, criptografia,
-     compressao, pacotes de recursos, bibliotecas estaticas e importadas
-     (via tools/xex_inspect.py). Isso funciona ate em XEX criptografado.
-  2. Se o corpo estiver CRIPTOGRAFADO, para aqui e registra o motivo: abri-lo
-     exigiria as chaves do console, o que seria contornar uma protecao.
-  3. Se nao estiver, extrai a imagem com neutrox_xex_unpack (LZX, somente
-     leitura) e percorre os pacotes de recursos XUIZ procurando:
-       - bancos XACT: dash.xwb (ondas) + dash.xsb (cues = nomes de uso);
-       - arquivos RIFF/WAVE soltos (inclusive XMA);
-       - cenas/skins XUI (.xur) que referenciam sons (evidencia de funcao);
-       - referencias a recursos externos (sharedres:// = recursos do XAM).
-  4. Converte para WAV PCM 16 bits com o FFmpeg (XMA/XMA2 -> PCM), mantendo
-     canais e taxa, e VALIDA o resultado: canais, taxa, duracao (contra a
-     declarada no banco), integridade e silencio.
-  5. Associa funcoes (navegar, confirmar...) SOMENTE por evidencia verificavel:
-     o nome original da cue/arquivo e a skin/cena que o usa. Sem evidencia, o
-     audio fica como "nao confirmado" (guardado, mas nao usado). Nada e
-     inventado nem trocado por recriacao.
-  6. Instala em <destino>/<versao>/ com mapeamento.ini, ausentes.ini,
-     manifesto.ini e relatorio.txt (um relatorio tecnico por versao), alem de
-     <destino>/manifesto.json e <destino>/relatorio_extracao.txt.
-Arquivos .xwb/.xsb soltos ao lado do XEX tambem sao processados.
-
-O material extraido e PROPRIETARIO: fica apenas na pasta local do usuario,
-fora do repositorio (o .gitignore exclui local_audio/ e sons_originais/).
-
-Uso:
-  python tools/sound_extract.py --entrada <pasta_com_xex> [--destino <pasta>]
-         [--unpack <neutrox_xex_unpack.exe>] [--ffmpeg <ffmpeg.exe>]
-  (destino padrao: %LOCALAPPDATA%/NeutroX/local_audio)
+Abre imagens XEX sem criptografia e lê XUIZ, XACT, WAV/XMA/WMA e evidências
+em XUI e Lua 5.1. Converte, valida e consolida por versão em local_audio/.
+O manifesto JSON guarda os hashes e a cadeia de origem. --pacote-local com
+--xex-app monta a pasta USB. O material original extraído é de uso local.
 """
 import argparse
-import datetime
 import hashlib
-import json
 import os
 import pathlib
 import re
@@ -51,6 +21,7 @@ import wave
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # nao deixa __pycache__ em tools/
 import xex_inspect  # noqa: E402  (mesmo diretorio)
+from audio_lua import audio_calls
 
 GENERATED_TAG = "# Gerado por tools/sound_extract.py"
 
@@ -77,6 +48,8 @@ FUNCTION_RULES = [
     ("tab_switch", "categoria", "troca de aba/categoria"),
     ("snd_panelunfold", "abrir", "painel se abrindo (PanelFoldSounds)"),
     ("btn_inactiveselect", "erro", "selecao de item inativo (acao indisponivel)"),
+    ("dashboard_startup", "entrada", "inicialização do dashboard identificada pelo nome"),
+    ("dash_startup", "entrada", "inicialização do dashboard identificada pelo nome"),
     ("snd_transitionfrom", "transicao", "transicao de cena (SceneTransitions)"),
 ]
 RULE_INDEX = {k: (e, why, rank) for rank, (k, e, why) in enumerate(FUNCTION_RULES)}
@@ -122,20 +95,21 @@ def sha256(data):
 
 # --------------------------------------------------------------------------- XEX
 def xex_info(path):
-    d = open(path, "rb").read(0x10000)
-    if d[:4] != b"XEX2":
+    header = xex_inspect.inspect(str(path))
+    execution = header.get("execution_id", {})
+    version = execution.get("version", "")
+    match = re.fullmatch(r"2\.0\.(\d+)\.0", version)
+    if (not match or int(match[1]) not in THEMES or execution.get("title_id") != "0xFFFE07D1" or
+            "TITLE" not in header.get("module_flag_names", []) or header["errors"]):
         return None
-    count = be32(d, 0x14)
-    info = {"build": None, "version": None, "encrypted": None}
-    for i in range(count):
-        k, v = struct.unpack_from(">II", d, 0x18 + i * 8)
-        if k == 0x00040006:
-            ver = be32(d, v + 4)
-            info["build"] = (ver >> 8) & 0xFFFF
-            info["version"] = f"{(ver >> 28) & 0xF}.{(ver >> 24) & 0xF}.{(ver >> 8) & 0xFFFF}.{ver & 0xFF}"
-        if k == 0x000003FF:
-            info["encrypted"] = struct.unpack_from(">H", d, v + 4)[0] != 0
-    return info
+    encryption = header.get("file_format", {}).get("encryption")
+    with path.open("rb") as f:
+        prefix = f.read(0x10000)
+    ff = [v for k, v in struct.iter_unpack(">II", prefix[0x18:0x18 + 8 * be32(prefix, 0x14)])
+          if k == 0x000003FF and v + 8 <= len(prefix)]
+    method = struct.unpack_from(">H", prefix, ff[0] + 4)[0] if len(ff) == 1 and encryption is not None else None
+    return {"build": int(match[1]), "version": version, "encrypted": None if method is None else method != 0,
+            "header": header}
 
 
 def parse_xuiz(blob):
@@ -150,6 +124,8 @@ def parse_xuiz(blob):
             return []
         size, off = struct.unpack_from(">II", blob, p)
         n = blob[p + 8]
+        if p + 9 + n > len(blob):
+            return []
         name = blob[p + 9:p + 9 + n].decode("latin-1")
         entries.append((name, size, off))
         p += 9 + n
@@ -293,11 +269,10 @@ def riff_codec(data):
     p = 12
     while p + 8 <= len(data):
         cid, sz = data[p:p + 4], struct.unpack_from("<I", data, p + 4)[0]
-        if cid == b"fmt " and sz >= 16:
+        if cid == b"fmt " and sz >= 16 and p + 8 + sz <= len(data):
             tag, ch, rate = struct.unpack_from("<HHI", data, p + 8)
-            if tag == 0x0165 and sz >= 32:  # XMAWAVEFORMAT: taxa/canais no 1o fluxo
-                rate = struct.unpack_from("<I", data, p + 8 + 16 + 8)[0]
-                ch = data[p + 8 + 16 + 17]
+            if tag == 0x0165:  # XMA1 não usa os campos de canais/taxa de WAVEFORMATEX
+                ch = rate = 0
             return {0x0001: "PCM", 0x0003: "PCM float", 0x0165: "XMA", 0x0166: "XMA2",
                     0x0002: "ADPCM", 0x0161: "WMA"}.get(tag, f"0x{tag:04X}"), ch, rate
         p += 8 + sz + (sz & 1)
@@ -306,10 +281,33 @@ def riff_codec(data):
 
 def convert_and_validate(ffmpeg, src, dst, expect_samples=None):
     """Converte para WAV PCM 16 e valida. Retorna (ok, info|motivo)."""
-    r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-c:a", "pcm_s16le",
-                        str(dst)], capture_output=True, text=True)
-    if r.returncode != 0 or not dst.exists():
-        return False, "FFmpeg falhou: " + (r.stderr.strip()[:120] or "sem mensagem")
+    direct = False
+    try:
+        with wave.open(str(src)) as wav:
+            direct = wav.getsampwidth() == 2
+    except (wave.Error, EOFError, OSError):
+        pass
+    if direct:
+        from xbox_install import validate_wav
+        try:
+            validate_wav(src)
+            shutil.copyfile(src, dst)
+        except (OSError, ValueError, struct.error) as ex:
+            return False, str(ex)
+    elif not ffmpeg:
+        return False, "FFmpeg necessário para converter este codec"
+    if not direct:
+        try:
+            r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-xerror", "-nostdin", "-y",
+                                "-protocol_whitelist", "file", "-i", str(src), "-map", "0:a:0",
+                                "-c:a", "pcm_s16le", "-t", "12.01", str(dst)],
+                               capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+            if r.returncode != 0 or not dst.exists():
+                dst.unlink(missing_ok=True)
+                return False, "FFmpeg falhou: " + (r.stderr.strip()[:120] or "sem mensagem")
+        except (OSError, subprocess.SubprocessError) as ex:
+            dst.unlink(missing_ok=True)
+            return False, f"FFmpeg falhou: {ex}"
     try:
         with wave.open(str(dst)) as w:
             ch, rate, n = w.getnchannels(), w.getframerate(), w.getnframes()
@@ -322,10 +320,12 @@ def convert_and_validate(ffmpeg, src, dst, expect_samples=None):
         problem = "WAV vazio"
     elif not 1 <= ch <= 2:
         problem = f"{ch} canais (esperado 1 ou 2)"
+    elif not 4000 <= rate <= 192000 or len(pcm) != n * ch * 2:
+        problem = "taxa inválida ou dados PCM truncados"
     elif n / rate > MAX_SECONDS:
         problem = f"duracao {n / rate:.1f} s acima do limite de {MAX_SECONDS:.0f} s para efeitos"
     else:
-        peak = max(abs(v) for v in struct.unpack(f"<{len(pcm) // 2}h", pcm)) if pcm else 0
+        peak = max(abs(v) for v in (v for v, in struct.iter_unpack("<h", pcm))) if pcm else 0
         if peak < 8:
             problem = "audio silencioso (pico abaixo de -72 dBFS)"
         elif expect_samples and abs(n - expect_samples) > 1024:
@@ -350,216 +350,229 @@ def xur_sound_refs(name, data):
     return refs
 
 
-def clean_generated(folder):
-    """Remove resultados de uma execucao anterior (somente pastas geradas por esta ferramenta)."""
-    marker = [folder / n for n in ("manifesto.ini", "mapeamento.ini")]
-    if not any(m.exists() and m.read_text(encoding="utf-8", errors="replace").startswith(GENERATED_TAG)
-               for m in marker):
-        return
-    for p in folder.iterdir():
-        if p.is_file() and p.suffix.lower() in (".wav", ".ini", ".txt"):
-            p.unlink()
+def safe_stem(name):
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")[:26] or "audio"
 
 
-# ------------------------------------------------------------------- por versao
-def process_version(x, info, dest, unpack, ffmpeg):
+def unique_wav(folder, stem):
+    base = safe_stem(stem)
+    path = folder / (base + ".wav")
+    for index in range(1, 10000):
+        if not path.exists():
+            return path
+        path = folder / f"{base}_{index}.wav"
+    raise ValueError("nomes de WAV esgotados")
+
+
+def process_version(x, info, dest, unpack, ffmpeg, extras=(), origin=None):
     folder, label = THEMES[info["build"]]
     tdir = dest / folder
     tdir.mkdir(parents=True, exist_ok=True)
-    clean_generated(tdir)
     raw_dir = dest / "brutos" / folder
-    if raw_dir.exists():
-        shutil.rmtree(raw_dir)
-    rep = []          # relatorio tecnico desta versao
-    files = []        # audios instalados (manifesto)
-    errors = []       # erros de conversao/validacao
-    external = []     # recursos externos referenciados
-    cands = {}        # efeito -> lista de (prioridade_fonte, rank, arquivo, evidencia)
-    causes = {}
-    hdr = xex_inspect.inspect(str(x))
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    rep, files, errors, external, cands, causes = [], [], [], [], {}, {}
+    hdr = info.get("header", {})
+    source = origin or (x.name if x else "recursos avulsos")
+    source_hash = sha256(x.read_bytes()) if x else None
 
     rep += [f"NEUTRO X - RELATORIO TECNICO DE AUDIO: {label} ({info['version']})",
-            f"Arquivo: {x.name}  ({x.stat().st_size} bytes, SHA-256 {sha256(x.read_bytes())})", ""]
-    rep.append("1. Cabecalho XEX2 (texto claro, lido sem descriptografar)")
-    ex = hdr.get("execution_id", {})
-    rep.append(f"   versao (Execution ID): {ex.get('version')}  - confere com {label}: "
-               f"{'sim' if ex.get('version') == info['version'] else 'NAO'}")
-    rep.append(f"   title id: {ex.get('title_id')}   nome PE original: {hdr.get('original_pe_name')}   "
-               f"data do PE: {hdr.get('pe_timestamp')}")
-    ff = hdr.get("file_format", {})
-    rep.append(f"   criptografia: {ff.get('encryption')}   compressao: {ff.get('compression')}")
-    libs = hdr.get("static_libraries", [])
-    alibs = [lib for lib in libs if lib.split()[0].upper().startswith(AUDIO_LIBS)]
-    rep.append("   bibliotecas de audio ligadas estaticamente: " + (", ".join(alibs) or "nenhuma listada"))
-    rep.append("   bibliotecas importadas: " + "; ".join(hdr.get("import_libraries", [])))
+            f"Fonte: {source} (SHA-256 {source_hash or 'por recurso'})", ""]
     res = hdr.get("resources", [])
-    rep.append(f"   pacotes de recursos ({len(res)}): " + ", ".join(r.split(" @")[0] for r in res))
-    rep.append("")
+    if x:
+        ff = hdr.get("file_format", {})
+        rep.append(f"Cabecalho: criptografia {ff.get('encryption')}; compressao {ff.get('compression')}")
+        libs = [lib for lib in hdr.get("static_libraries", []) if lib.split()[0].upper().startswith(AUDIO_LIBS)]
+        rep.append("Bibliotecas de audio: " + (", ".join(libs) or "nenhuma listada"))
+        rep.append("Importacoes: " + "; ".join(hdr.get("import_libraries", [])))
+        rep.append(f"Pacotes no cabecalho ({len(res)}): " + ", ".join(res))
 
-    if info["encrypted"]:
-        cause = ("XEX criptografado (AES): os pacotes de recursos - inclusive 'dashcomm', onde o Metro V2 guarda o "
-                 "banco de sons dash.xwb/dash.xsb - so podem ser lidos com as chaves do console; nao contornado")
-        has_dashcomm = any(r.startswith("dashcomm ") for r in res)
-        rep.append("2. Conteudo: NAO ANALISADO")
-        rep.append("   " + cause)
-        if has_dashcomm:
-            size = next(r for r in res if r.startswith("dashcomm ")).split("(")[-1].rstrip(")")
-            rep.append(f"   o pacote 'dashcomm' existe nesta versao ({size}); e o candidato provavel aos sons, mas "
-                       "isso nao pode ser verificado sem abrir o conteudo")
-        rep.append("   para analisar esta versao e preciso uma copia NAO criptografada do mesmo XEX, obtida de forma "
-                   "legitima pelo proprio usuario (a ferramenta processa qualquer XEX com corpo em texto claro)")
-        for e in EFFECTS:
-            causes[e] = cause
-        status = "criptografado"
-    else:
+    banks_xwb, banks_xsb, riffs, xur_refs = {}, {}, [], {}
+    calls = []
+
+    def collect(pkg, name, data):
+        low = name.lower()
+        if low.endswith(".xwb") and data[:4] in (b"WBND", b"DNBW"):
+            banks_xwb[f"{pkg}/{name}"] = data
+        elif low.endswith(".xsb") and data[:4] in (b"SDBK", b"KBDS"):
+            banks_xsb[f"{pkg}/{name}"] = data
+        elif low.endswith(AUDIO_EXT):
+            riffs.append((pkg, name, data))
+        elif low.endswith(".lub"):
+            module = pathlib.PurePosixPath(low).name == "xuisound.lub"
+            for proto, line, pc, symbol, args in audio_calls(data, sound_module=module):
+                calls.append({"arquivo": f"{pkg}/{name}", "prototipo": proto, "linha": line,
+                              "pc": pc, "metodo": symbol, "argumentos_simbolicos": args})
+        elif low.endswith((".xur", ".xui")):
+            for ref in xur_sound_refs(name, data):
+                xur_refs.setdefault(ref.lower(), set()).add(f"{pkg}/{name}")
+        elif low.endswith((".xwb", ".xsb")):
+            external.append(f"{name} referenciado por {pkg}; banco sem dados reconheciveis")
+
+    cause = "nenhuma cue ou arquivo com funcao comprovada entre os recursos acessiveis"
+    status = "recursos_avulsos"
+    if x and info["encrypted"] is not False:
+        status = "criptografado" if info["encrypted"] else "indeterminado"
+        cause = ("XEX criptografado" if info["encrypted"] else "criptografia do XEX indeterminada") +                 "; forneca os recursos legiveis da mesma versao"
+        rep.append(cause)
+        if any(r.startswith("dashcomm ") for r in res):
+            rep.append("Candidato no cabecalho: dashcomm. Os nomes internos dos bancos nao foram observados.")
+    elif x and not unpack:
+        status = "falha"
+        cause = "extrator de XEX em texto claro indisponivel"
+    elif x:
         status = "aberto"
-        with tempfile.TemporaryDirectory() as tmp:
-            r = subprocess.run([unpack, str(x), tmp], capture_output=True, text=True)
-            if r.returncode != 0:
-                cause = "falha ao extrair a imagem do XEX: " + (r.stderr.strip() or r.stdout.strip())[:120]
-                rep.append("2. Conteudo: " + cause)
-                for e in EFFECTS:
-                    causes[e] = cause
-                status = "falha"
-            else:
-                raw_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=dest) as tmp:
+            try:
+                run = subprocess.run([unpack, str(x), tmp], capture_output=True, encoding="utf-8",
+                                     errors="replace", timeout=90)
+                if run.returncode:
+                    raise ValueError((run.stderr or run.stdout).strip().splitlines()[-1][:180])
                 image = pathlib.Path(tmp, "imagem.bin").read_bytes()
-                rep.append(f"2. Imagem descomprimida: {len(image)} bytes (LZX, sem criptografia)")
+                rep.append(f"Imagem legivel: {len(image)} bytes, SHA-256 {sha256(image)}")
                 api = sorted({m.group().decode() for m in re.finditer(
                     rb"[\x20-\x7e]*(?:[Xx][Aa]udio|XACT|[Xx]ui[Ss]ound|\.xwb|\.xsb)[\x20-\x7e]*", image)})
-                rep.append("   referencias a audio no codigo (strings): " + ("; ".join(api[:12]) or "nenhuma"))
-                pkgs = {}
-                for resf in sorted(pathlib.Path(tmp, "recursos").glob("*.bin")):
-                    pkgs[resf.stem] = parse_xuiz(resf.read_bytes())
-                banks_xwb, banks_xsb, riffs, xur_refs = {}, {}, [], {}
-                for pkg, entries in pkgs.items():
-                    for name, data in entries:
-                        low = name.lower()
-                        if low.endswith(".xwb"):
-                            banks_xwb[f"{pkg}/{name}"] = data
-                        elif low.endswith(".xsb"):
-                            banks_xsb[f"{pkg}/{name}"] = data
-                        elif low.endswith(AUDIO_EXT):
-                            riffs.append((pkg, name, data))
-                        elif low.endswith(".xur"):
-                            for ref in xur_sound_refs(name, data):
-                                xur_refs.setdefault(ref.lower(), set()).add(f"{pkg}/{name}")
-                # bancos soltos ao lado do XEX
-                for ext in sorted(set(x.parent.glob("*.xwb")) | set(x.parent.glob("*.xsb"))):
-                    (banks_xwb if ext.suffix.lower() == ".xwb" else banks_xsb)[f"(arquivo externo)/{ext.name}"] = \
-                        ext.read_bytes()
-                rep.append(f"   pacotes XUIZ lidos: {len(pkgs)}; bancos XACT: {len(banks_xwb)} XWB, "
-                           f"{len(banks_xsb)} XSB; audios RIFF soltos: {len(riffs)}")
-                rep.append("")
-                rep.append("3. Bancos XACT")
-                for key, data in sorted(banks_xwb.items()) + sorted(banks_xsb.items()):
-                    (raw_dir / key.replace("/", "__").replace("\\", "_")).write_bytes(data)
-                xsb_parsed = {}
-                for key, data in sorted(banks_xsb.items()):
-                    try:
-                        xs = parse_xsb(data)
-                        xsb_parsed[key] = xs
-                        rep.append(f"   {key}: {len(xs['cues'])} cues, banco de ondas '{xs['banco_de_ondas']}'")
-                        for p in xs["problemas"]:
-                            rep.append(f"      aviso: {p}")
-                    except (BankError, struct.error, ValueError) as ex:
-                        rep.append(f"   {key}: XSB nao interpretado ({ex})")
-                for key, data in sorted(banks_xwb.items()):
-                    try:
-                        wb = parse_xwb(data)
-                    except (BankError, struct.error) as ex:
-                        rep.append(f"   {key}: XWB nao interpretado ({ex})")
-                        errors.append(f"{key}: {ex}")
-                        continue
-                    codecs = sorted({w["codec"] for w in wb["ondas"]})
-                    rep.append(f"   {key}: banco '{wb['nome']}' XACT v{wb['versao']}, {len(wb['ondas'])} ondas, "
-                               f"codec {', '.join(codecs)}")
-                    # cues que apontam para este banco
-                    by_wave = {}
-                    for xs in xsb_parsed.values():
-                        if xs["banco_de_ondas"] != wb["nome"]:
-                            continue
-                        for cue, waves, kind in xs["cues"]:
-                            for k, wi in enumerate(waves):
-                                alias = cue if len(waves) == 1 else f"{cue} (variacao {k + 1}/{len(waves)})"
-                                by_wave.setdefault(wi, []).append((cue, alias, kind))
-                    stem_bank = pathlib.PurePosixPath(key.replace("\\", "/")).stem
-                    for w in wb["ondas"]:
-                        cues = by_wave.get(w["indice"], [])
-                        # nome do arquivo: a cue de maior prioridade (regras), senao a primeira
-                        ranked = sorted(cues, key=lambda c: RULE_INDEX.get(c[0].lower(), (None, None, 99))[2])
-                        primary = ranked[0][0] if ranked else f"{stem_bank}_onda{w['indice']:02}"
-                        if (tdir / f"{primary}.wav").exists() or ranked and ranked[0][1] != ranked[0][0]:
-                            primary = f"{primary}_onda{w['indice']:02}"  # variacoes da mesma cue: um arquivo cada
-                        rate = min(XMA_RATES, key=lambda r: abs(r - w["taxa_declarada"])) \
-                            if w["codec"] == "XMA2" else w["taxa_declarada"]
-                        wrapped = riff_for_xwb_wave(w, rate)
-                        src_desc = f"{key} onda {w['indice']}" + (f", cue(s) {', '.join(c[1] for c in cues)}"
-                                                                    if cues else ", sem cue")
-                        if wrapped is None:
-                            errors.append(f"{src_desc}: codec {w['codec']} nao suportado")
-                            rep.append(f"      [erro] onda {w['indice']}: codec {w['codec']} nao suportado")
-                            continue
-                        raw = raw_dir / f"{stem_bank}_onda{w['indice']:02}.{w['codec'].lower()}.riff"
-                        raw.write_bytes(wrapped)
-                        wav = tdir / f"{primary}.wav"
-                        ok, res_v = convert_and_validate(ffmpeg, raw, wav, w["amostras_declaradas"])
-                        if not ok:
-                            errors.append(f"{src_desc}: {res_v}")
-                            rep.append(f"      [erro] onda {w['indice']} ({primary}): {res_v}")
-                            continue
-                        rate_note = ""
-                        if w["codec"] == "XMA2" and w["taxa_declarada"] != rate:
-                            rate_note = f"; taxa no banco {w['taxa_declarada']} -> XMA a {rate} Hz"
-                        files.append(classify_file(wav.name, [c[0] for c in cues], src_desc,
-                                                   f"{w['codec']} {w['canais']}ch", res_v, xur_refs, cands,
-                                                   source_rank=0, uncertain_rate=abs(w["taxa_declarada"] - rate)
-                                                   > rate * 0.01 and w["codec"] == "XMA2"))
-                        rep.append(f"      onda {w['indice']:2} -> {wav.name}: {files[-1]['status']}"
-                                   f"{' => ' + files[-1]['efeito'] if files[-1]['efeito'] else ''}; "
-                                   f"{res_v['segundos']} s, {res_v['canais']}ch {res_v['taxa']} Hz{rate_note}; "
-                                   f"cues: {', '.join(c[1] for c in cues) or 'nenhuma'}")
-                rep.append("")
-                rep.append("4. Audios RIFF soltos nos pacotes")
-                for pkg, name, data in riffs:
-                    stem = pathlib.PurePosixPath(name.replace("\\", "/")).stem
-                    if data[:4] != b"RIFF":
-                        rep.append(f"   [referencia] {pkg}/{name}: sem dados de audio no pacote")
-                        continue
-                    codec, ch, rate = riff_codec(data)
-                    raw = raw_dir / f"{pkg}__{stem}{pathlib.PurePosixPath(name).suffix.lower()}"
-                    raw.write_bytes(data)
-                    wav = tdir / f"{pkg}__{stem}.wav"
-                    ok, res_v = convert_and_validate(ffmpeg, raw, wav)
-                    if not ok:
-                        errors.append(f"{pkg}/{name}: {res_v}")
-                        rep.append(f"   [erro] {pkg}/{name}: {res_v}")
-                        continue
-                    files.append(classify_file(wav.name, [stem], f"{pkg}/{name}", f"{codec} {ch}ch {rate} Hz",
-                                               res_v, xur_refs, cands, source_rank=1))
-                    rep.append(f"   {pkg}/{name} ({codec}) -> {wav.name}: {files[-1]['status']}"
-                               f"{' => ' + files[-1]['efeito'] if files[-1]['efeito'] else ''}; {res_v['segundos']} s")
-                if not riffs:
-                    rep.append("   nenhum")
-                rep.append("")
-                rep.append("5. Referencias a sons em cenas/skins XUI (.xur)")
-                for ref in sorted(xur_refs):
-                    where = ", ".join(sorted(xur_refs[ref])[:3])
-                    rep.append(f"   {ref}  <- {where}")
-                    if ref.startswith("sharedres://"):
-                        external.append(f"{ref} (recurso compartilhado do sistema/XAM, fora deste XEX; "
-                                        f"usado por {where})")
-                if external:
-                    rep.append("   recursos EXTERNOS (nao contidos neste XEX):")
-                    rep += [f"      {e}" for e in external]
-                for e in EFFECTS:
-                    if e not in cands:
-                        causes[e] = ("nenhuma cue/arquivo com nome correspondente a esta funcao entre os sons do "
-                                     "XEX" + (" (bancos XACT e audios soltos verificados)" if banks_xwb else ""))
+                rep.append("Strings de audio (referencias, sem prova de chamada): " + ("; ".join(api[:30]) or "nenhuma"))
+                packages = sorted(pathlib.Path(tmp, "recursos").glob("*.bin"))
+                rep.append(f"Recursos extraidos: {len(packages)}")
+                for resource in packages:
+                    blob = resource.read_bytes()
+                    if blob[:4] == b"XUIZ":
+                        for name, data in parse_xuiz(blob):
+                            collect(resource.stem, name, data)
+                    elif blob[:4] in (b"WBND", b"DNBW", b"SDBK", b"KBDS"):
+                        ext = ".xwb" if blob[:4] in (b"WBND", b"DNBW") else ".xsb"
+                        collect("RESOURCE_INFO", resource.stem + ext, blob)
+            except (OSError, ValueError, IndexError, subprocess.SubprocessError) as ex:
+                status = "falha"
+                cause = f"falha ao extrair imagem do XEX: {ex}"
+                rep.append(cause)
+    for extra in extras:
+        data = extra.path.read_bytes()
+        rep.append(f"Recurso separado: {extra.origin} ({sha256(data)})")
+        if data[:4] == b"XUIZ":
+            for name, payload in parse_xuiz(data):
+                collect(extra.origin, name, payload)
+        else:
+            collect(extra.origin, extra.name, data)
+    for call in calls:
+        rep.append(f"Chamada Lua 5.1 (estática): {call['arquivo']}, protótipo {call['prototipo']}, "
+                   f"instrução {call['pc']}: {call['metodo']}")
+    rep.append(f"Bancos XACT: {len(banks_xwb)} XWB e {len(banks_xsb)} XSB; audio solto: {len(riffs)}")
+    rep.append("3. Bancos XACT")
+    for key, data in sorted(banks_xwb.items()) + sorted(banks_xsb.items()):
+        suffix = pathlib.PurePosixPath(key).suffix
+        (raw_dir / (sha256(data)[:16] + suffix)).write_bytes(data)
+    xsb_parsed = {}
+    for key, data in sorted(banks_xsb.items()):
+        try:
+            xs = parse_xsb(data)
+            xsb_parsed[key] = xs
+            rep.append(f"   {key}: {len(xs['cues'])} cues, banco de ondas '{xs['banco_de_ondas']}'")
+            for p in xs["problemas"]:
+                rep.append(f"      aviso: {p}")
+        except (BankError, struct.error, ValueError) as ex:
+            rep.append(f"   {key}: XSB nao interpretado ({ex})")
+    for key, data in sorted(banks_xwb.items()):
+        try:
+            wb = parse_xwb(data)
+        except (BankError, struct.error) as ex:
+            rep.append(f"   {key}: XWB nao interpretado ({ex})")
+            errors.append(f"{key}: {ex}")
+            continue
+        codecs = sorted({w["codec"] for w in wb["ondas"]})
+        rep.append(f"   {key}: banco '{wb['nome']}' XACT v{wb['versao']}, {len(wb['ondas'])} ondas, "
+                   f"codec {', '.join(codecs)}")
+        # cues que apontam para este banco
+        by_wave = {}
+        for xs in xsb_parsed.values():
+            if xs["banco_de_ondas"].casefold() != wb["nome"].casefold():
+                continue
+            for cue, waves, kind in xs["cues"]:
+                for k, wi in enumerate(waves):
+                    alias = cue if len(waves) == 1 else f"{cue} (variacao {k + 1}/{len(waves)})"
+                    by_wave.setdefault(wi, []).append((cue, alias, kind))
+        stem_bank = pathlib.PurePosixPath(key.replace("\\", "/")).stem
+        for w in wb["ondas"]:
+            cues = by_wave.get(w["indice"], [])
+            # nome do arquivo: a cue de maior prioridade (regras), senao a primeira
+            ranked = sorted(cues, key=lambda c: RULE_INDEX.get(c[0].lower(), (None, None, 99))[2])
+            primary = ranked[0][0] if ranked else f"{stem_bank}_onda{w['indice']:02}"
+            if (tdir / f"{primary}.wav").exists() or ranked and ranked[0][1] != ranked[0][0]:
+                primary = f"{primary}_onda{w['indice']:02}"  # variacoes da mesma cue: um arquivo cada
+            rate = min(XMA_RATES, key=lambda r: abs(r - w["taxa_declarada"])) \
+                if w["codec"] == "XMA2" else w["taxa_declarada"]
+            wrapped = riff_for_xwb_wave(w, rate)
+            src_desc = f"{key} onda {w['indice']}" + (f", cue(s) {', '.join(c[1] for c in cues)}"
+                                                        if cues else ", sem cue")
+            if wrapped is None:
+                errors.append(f"{src_desc}: codec {w['codec']} nao suportado")
+                rep.append(f"      [erro] onda {w['indice']}: codec {w['codec']} nao suportado")
+                continue
+            raw = raw_dir / (sha256(wrapped)[:16] + ".riff")
+            raw.write_bytes(wrapped)
+            wav = unique_wav(tdir, primary)
+            ok, res_v = convert_and_validate(ffmpeg, raw, wav, w["amostras_declaradas"])
+            if not ok:
+                errors.append(f"{src_desc}: {res_v}")
+                rep.append(f"      [erro] onda {w['indice']} ({primary}): {res_v}")
+                continue
+            rate_note = ""
+            if w["codec"] == "XMA2" and w["taxa_declarada"] != rate:
+                rate_note = f"; taxa no banco {w['taxa_declarada']} -> XMA a {rate} Hz"
+            files.append(classify_file(wav.name, [c[0] for c in cues], src_desc,
+                                       f"{w['codec']} {w['canais']}ch", res_v, xur_refs, cands,
+                                       source_rank=0, uncertain_rate=abs(w["taxa_declarada"] - rate)
+                                       > rate * 0.01 and w["codec"] == "XMA2"))
+            files[-1]["sha256_recurso"] = sha256(data)
+            rep.append(f"      onda {w['indice']:2} -> {wav.name}: {files[-1]['status']}"
+                       f"{' => ' + files[-1]['efeito'] if files[-1]['efeito'] else ''}; "
+                       f"{res_v['segundos']} s, {res_v['canais']}ch {res_v['taxa']} Hz{rate_note}; "
+                       f"cues: {', '.join(c[1] for c in cues) or 'nenhuma'}")
+    rep.append("")
+    rep.append("4. Audios RIFF soltos nos pacotes")
+    for pkg, name, data in riffs:
+        stem = pathlib.PurePosixPath(name.replace("\\", "/")).stem
+        if data[:4] != b"RIFF" and not name.lower().endswith(".wma"):
+            rep.append(f"   [referencia] {pkg}/{name}: sem dados de audio no pacote")
+            continue
+        codec, ch, rate = riff_codec(data) if data[:4] == b"RIFF" else ("WMA", 0, 0)
+        raw = raw_dir / (sha256(data)[:16] + pathlib.PurePosixPath(name).suffix.lower())
+        raw.write_bytes(data)
+        wav = unique_wav(tdir, safe_stem(pathlib.PurePosixPath(pkg).name) + "__" + stem)
+        ok, res_v = convert_and_validate(ffmpeg, raw, wav)
+        if not ok:
+            errors.append(f"{pkg}/{name}: {res_v}")
+            rep.append(f"   [erro] {pkg}/{name}: {res_v}")
+            continue
+        files.append(classify_file(wav.name, [stem], f"{pkg}/{name}", f"{codec} {ch}ch {rate} Hz" if ch and rate else codec,
+                                   res_v, xur_refs, cands, source_rank=1))
+        files[-1]["sha256_recurso"] = sha256(data)
+        rep.append(f"   {pkg}/{name} ({codec}) -> {wav.name}: {files[-1]['status']}"
+                   f"{' => ' + files[-1]['efeito'] if files[-1]['efeito'] else ''}; {res_v['segundos']} s")
+    if not riffs:
+        rep.append("   nenhum")
+    rep.append("")
+    rep.append("5. Referencias a sons em cenas/skins XUI (.xur)")
+    for ref in sorted(xur_refs):
+        where = ", ".join(sorted(xur_refs[ref])[:3])
+        rep.append(f"   {ref}  <- {where}")
+        if ref.startswith("sharedres://"):
+            external.append(f"{ref} (recurso compartilhado do sistema/XAM, fora deste XEX; "
+                            f"usado por {where})")
+    if external:
+        rep.append("   recursos EXTERNOS (nao contidos neste XEX):")
+        rep += [f"      {e}" for e in external]
+    for e in EFFECTS:
+        if e not in cands:
+            causes[e] = cause
     # escolha final por efeito: fonte preferida (banco XACT) e regra de maior prioridade
     found = {}
     for e, lst in cands.items():
         lst.sort()
+        same_rank = {candidate[2] for candidate in lst if candidate[:2] == lst[0][:2]}
+        if len({f["validacao"]["sha256"] for f in files if f["arquivo"] in same_rank}) > 1:
+            causes[e] = "Há mais de um áudio diferente com a mesma evidência"
+            continue
         found[e] = lst[0]
         for f in files:
             if f["arquivo"] == lst[0][2]:
@@ -584,28 +597,12 @@ def process_version(x, info, dest, unpack, ffmpeg):
     for er in errors:
         rep.append(f"   erro: {er}")
 
-    # ---- arquivos de saida da versao
-    (tdir / "mapeamento.ini").write_text(
-        GENERATED_TAG + " - somente funcoes CONFIRMADAS por evidencia\n" +
-        "".join(f"{e}={found[e][2]}\n" for e in EFFECTS if e in found), encoding="utf-8")
-    (tdir / "ausentes.ini").write_text(
-        GENERATED_TAG + " - efeitos sem audio original e o motivo\n" +
-        "".join(f"{e}={causes.get(e, 'sem evidencia')}\n" for e in EFFECTS if e not in found), encoding="utf-8")
-    man = [GENERATED_TAG, f"dashboard={label}", f"versao={info['version']}", f"xex={x.name}", f"xex_estado={status}",
-           f"audios_originais={len(files)}", f"efeitos_esperados={len(EFFECTS)}", f"efeitos_confirmados={len(found)}",
-           f"nao_confirmados={unconfirmed}", f"erros_conversao={len(errors)}", f"recursos_externos={len(external)}",
-           f"situacao={situ}",
-           "# arquivo.<nome>=status|efeito|origem|codec|canais|taxa|segundos|sha256"]
-    for f in files:
-        v = f["validacao"]
-        man.append(f"arquivo.{f['arquivo']}={f['status']}|{','.join(f['usado_para']) or f['efeito'] or '-'}|"
-                   f"{f['origem']}|{f['codec']}|{v['canais']}|{v['taxa']}|{v['segundos']}|{v['sha256']}")
-    (tdir / "manifesto.ini").write_text("\n".join(man) + "\n", encoding="utf-8")
-    (tdir / "relatorio.txt").write_text("\n".join(rep) + "\n", encoding="utf-8")
-    return {"dashboard": label, "versao": info["version"], "pasta": folder, "xex": x.name, "xex_estado": status,
+    return {"dashboard": label, "versao": info["version"], "pasta": folder, "xex": x.name if x else None,
+            "fonte": source, "sha256_fonte": source_hash, "xex_estado": status,
             "situacao": situ, "efeitos": {e: (found[e][2] if e in found else None) for e in EFFECTS},
             "ausentes": {e: causes.get(e) for e in EFFECTS if e not in found}, "arquivos": files,
-            "nao_confirmados": unconfirmed, "erros_conversao": errors, "recursos_externos": external}, rep
+            "nao_confirmados": unconfirmed, "erros_conversao": errors, "recursos_externos": external,
+            "chamadas_lua": calls}, rep
 
 
 def classify_file(fname, names, origin, codec, val, xur_refs, cands, source_rank, uncertain_rate=False):
@@ -647,57 +644,36 @@ def classify_file(fname, names, origin, codec, val, xur_refs, cands, source_rank
 
 
 def main(argv):
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--entrada", required=True)
+    import sound_batch
+    ap = argparse.ArgumentParser(description="Extrai sons originais de fontes locais")
+    ap.add_argument("--entrada", action="append", default=[], help="ZIP, XEX ou pasta (repetível)")
+    ap.add_argument("--recursos", action="append", default=[], help="recursos avulsos com origem conhecida: BUILD=CAMINHO")
     ap.add_argument("--destino", default=os.path.join(os.environ.get("LOCALAPPDATA", "."), "NeutroX", "local_audio"))
-    ap.add_argument("--unpack", default=None)
-    ap.add_argument("--ffmpeg", default=None)
-    a = ap.parse_args(argv)
+    ap.add_argument("--unpack")
+    ap.add_argument("--ffmpeg")
+    ap.add_argument("--pacote-local", help="monta uma pasta para copiar via USB")
+    ap.add_argument("--xex-app", help="NeutroX.xex compilado para a pasta USB")
+    args = ap.parse_args(argv)
+    if not args.entrada and not args.recursos:
+        ap.error("informe --entrada ou --recursos")
+    if bool(args.pacote_local) != bool(args.xex_app):
+        ap.error("--pacote-local e --xex-app devem ser informados juntos")
 
-    here = pathlib.Path(__file__).resolve().parent.parent
-    tooldir = pathlib.Path(__file__).resolve().parent
-    unpack = a.unpack or next((str(p) for p in [tooldir / "neutrox_xex_unpack.exe",  # pacote de release
-                                                 here / "build_release/Release/neutrox_xex_unpack.exe",
-                                                 here / "build/Release/neutrox_xex_unpack.exe",
-                                                 here / "build/neutrox_xex_unpack"] if p.exists()), None)
-    if not unpack or not pathlib.Path(unpack).is_file():
-        print("ERRO: neutrox_xex_unpack nao encontrado (compile o projeto ou use --unpack)")
-        return 2
-    unpack = str(pathlib.Path(unpack).resolve())  # caminho absoluto: o CreateProcess nao resolve relativos com '/'
-    a.ffmpeg = find_ffmpeg(a.ffmpeg)
-    if not a.ffmpeg:
-        print("ERRO: nenhum ffmpeg com decodificadores XMA/XMA2 encontrado (instale o FFmpeg completo ou use --ffmpeg)")
-        return 2
-    src = pathlib.Path(a.entrada)
-    dest = pathlib.Path(a.destino)
-    dest.mkdir(parents=True, exist_ok=True)
-    summary = [f"Neutro X - extracao de sons originais ({datetime.datetime.now():%d/%m/%Y %H:%M})",
-               f"Entrada: {src}", f"Destino: {dest}", f"Conversor: {a.ffmpeg}", ""]
-    results = []
-    for x in sorted(src.rglob("*.xex")):
-        info = xex_info(x)
-        if not info or info["build"] not in THEMES:
-            summary.append(f"[ignorado] {x.name}: nao e um dashboard conhecido")
-            continue
-        res, rep = process_version(x, info, dest, unpack, a.ffmpeg)
-        results.append(res)
-        summary += rep + ["", "=" * 78, ""]
-    seen = {r["pasta"] for r in results}
-    for b, (folder, label) in THEMES.items():
-        if folder not in seen:
-            summary.append(f"== {label}: nenhum XEX desta versao na entrada")
-    summary.append("RESUMO")
-    for r in results:
-        n = sum(v is not None for v in r["efeitos"].values())
-        summary.append(f"  {r['dashboard']:9} {r['versao']:13} {r['situacao']}; audios: {len(r['arquivos'])}, "
-                       f"nao confirmados: {r['nao_confirmados']}, erros: {len(r['erros_conversao'])}")
-    text = "\n".join(summary) + "\n"
-    (dest / "relatorio_extracao.txt").write_text(text, encoding="utf-8")
-    (dest / "manifesto.json").write_text(json.dumps({"gerado_em": datetime.datetime.now().isoformat(timespec="seconds"),
-                                                     "efeitos": EFFECTS, "versoes": results},
-                                                    ensure_ascii=False, indent=1), encoding="utf-8")
-    print(text)
-    return 0
+    tool_dir = pathlib.Path(__file__).resolve().parent
+    repo = tool_dir.parent
+    unpack = args.unpack or next((str(p) for p in (tool_dir / "neutrox_xex_unpack.exe",
+                                                  repo / "build_release/Release/neutrox_xex_unpack.exe",
+                                                  repo / "build/Release/neutrox_xex_unpack.exe",
+                                                  repo / "build/neutrox_xex_unpack") if p.is_file()), None)
+    if unpack and not pathlib.Path(unpack).is_file():
+        ap.error("extrator XEX não encontrado")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
+    try:
+        return sound_batch.run_batch(args, sys.modules[__name__],
+                                     str(pathlib.Path(unpack).resolve()) if unpack else None, find_ffmpeg(args.ffmpeg))
+    except (ValueError, OSError, struct.error, sound_batch.zipfile.BadZipFile) as ex:
+        ap.exit(2, f"Erro: {ex}\n")
 
 
 if __name__ == "__main__":

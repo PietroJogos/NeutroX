@@ -1,5 +1,9 @@
 # Sons do Neutro X
 
+A 0.9.2 aceita múltiplos ZIPs, XEX e pastas em um único lote e pode montar a
+instalação USB com `--pacote-local`. Consulte o
+[comando e inventário da 0.9.2](RELATORIO_AUDIO_092.md#reproduzir-o-lote-e-testar-no-console).
+
 ## Três conjuntos, cada um no seu lugar
 
 | Conjunto | Onde fica | Vai para o GitHub? |

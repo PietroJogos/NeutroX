@@ -102,6 +102,12 @@ void App::shutdown() {
                 (unsigned long long)ms.requests, (unsigned long long)ms.started, (unsigned long long)ms.mutedMissing,
                 (unsigned long long)ms.mutedNotResident, (unsigned long long)ms.recreatedFallback, ms.peak,
                 (unsigned long long)as.framesPlayed, (unsigned long long)as.framesSilent);
+        for (int t = 1; t < kSoundThemeCount; ++t)
+            for (int s = 0; s < kSfxCount; ++s)
+                if (ms.mixedOriginal[t][s])
+                    logInfo("Original com sinal no mixer: %s/%s, %llu vozes",
+                            soundThemeInfo(SoundTheme(t)).folder, sfxFileName(Sfx(s)),
+                            (unsigned long long)ms.mixedOriginal[t][s]);
     }
     clearStack();
     pending_.clear();
@@ -206,10 +212,17 @@ void App::reloadOriginalSounds() {
     if (!ctx_.audio) return;
     ctx_.audio->loadOriginals(base);
     OrigReport rep = ctx_.audio->originalsReport();
-    for (int t = 1; t < kSoundThemeCount; ++t)
+    for (int t = 1; t < kSoundThemeCount; ++t) {
+        for (int s = 0; s < kSfxCount; ++s) {
+            const OrigEntry& entry = rep.e[t][s];
+            if (entry.status == OrigStatus::Loaded)
+                logInfo("Original validado: %s/%s -> %s (%.3f s)",
+                        soundThemeInfo(SoundTheme(t)).folder, sfxFileName(Sfx(s)), entry.file.c_str(), double(entry.seconds));
+        }
         logInfo("Sons originais %s: %d de %d validos; %d arquivos na pasta; nao confirmados %d; erros de conversao %d",
                 soundThemeInfo(SoundTheme(t)).name, rep.loaded(SoundTheme(t)), kSfxCount, rep.filesInFolder[t],
                 rep.unconfirmed[t], rep.convErrors[t]);
+    }
 }
 
 void App::openSoundStatus() { push(createSoundStatusScreen()); }

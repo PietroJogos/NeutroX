@@ -73,7 +73,9 @@ struct MixerStats {
     int peak = 0;                   // pico absoluto desde o inicio
     int lastVoices = 0;
     // Efeitos que ja ficaram mudos ao menos uma vez (bit = Sfx), por tema.
-    uint32_t mutedMask[6] = {};
+    uint32_t mutedMask[kSoundThemeCount] = {};
+    // Vozes originais que contribuíram pelo menos uma amostra PCM com sinal.
+    uint64_t mixedOriginal[kSoundThemeCount][kSfxCount] = {};
 };
 
 enum class OrigStatus : int { Loaded, Missing, Unsupported, Invalid };
@@ -139,6 +141,7 @@ private:
         double pos = 0;
         float step = 1;
         float gain = 1;
+        bool originalPending = false;
     };
     std::vector<std::vector<int16_t>> bank_;  // recriados [tema * kSfxCount + sfx]
     std::vector<std::vector<int16_t>> orig_;  // originais do tema residente [sfx] (vazio = ausente)

@@ -138,6 +138,7 @@ void Mixer::playThemed(SoundTheme t, Sfx s, float volume, float pitch) {
     }
     Voice v;
     v.data = data;
+    v.originalPending = data != &bank_[size_t(key)];
     v.key = key;
     v.gain = std::max(0.0f, std::min(volume, 1.0f));
     v.step = std::max(0.25f, std::min(pitch, 4.0f));
@@ -173,7 +174,12 @@ void Mixer::mix(int16_t* out, int frames) {
             size_t p = size_t(v.pos);
             if (p + 1 < d.size()) {
                 float frac = float(v.pos - double(p));
-                acc += (d[p] * (1 - frac) + d[p + 1] * frac) * v.gain;
+                const float sample = (d[p] * (1 - frac) + d[p + 1] * frac) * v.gain;
+                acc += sample;
+                if (v.originalPending && std::fabs(sample * master_) >= 1.0f) {
+                    ++stats_.mixedOriginal[v.key / kSfxCount][v.key % kSfxCount];
+                    v.originalPending = false;
+                }
             }
             v.pos += v.step;
         }

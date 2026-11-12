@@ -10,6 +10,7 @@
 // Saida: <pasta>/imagem.bin e <pasta>/recursos/<nome>.bin (tabela RESOURCE_INFO).
 // Uso:   neutrox_xex_unpack <arquivo.xex> <pasta_saida>
 // Codigos de saida: 0 ok, 2 erro de leitura/formato, 3 criptografado (recusado).
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +21,11 @@
 namespace {
 
 uint32_t be32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; }
+constexpr size_t kMaxImageBytes = 128u * 1024 * 1024;
+bool hasRange(size_t size, size_t offset, size_t length) {
+    return offset <= size && length <= size - offset;
+}
+
 uint16_t be16(const uint8_t* p) { return uint16_t((p[0] << 8) | p[1]); }
 
 // ------------------------------------------------------------ LZX
@@ -305,6 +311,10 @@ bool readFile(const std::string& p, std::vector<uint8_t>& d) {
     std::fseek(f, 0, SEEK_END);
     long n = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
+    if (n <= 0 || size_t(n) > kMaxImageBytes) {
+        std::fclose(f);
+        return false;
+    }
     d.resize(size_t(n));
     bool ok = std::fread(d.data(), 1, d.size(), f) == d.size();
     std::fclose(f);
@@ -332,13 +342,25 @@ int main(int argc, char** argv) {
         return 2;
     }
     uint32_t peOff = be32(&x[8]), secOff = be32(&x[0x10]), count = be32(&x[0x14]);
+    if (!hasRange(x.size(), peOff, 0) || !hasRange(x.size(), secOff, 276) || count > (x.size() - 24) / 8) {
+        std::fprintf(stderr, "ERRO: cabecalho XEX fora dos limites\n");
+        return 2;
+    }
     uint32_t ffi = 0, resInfo = 0;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t k = be32(&x[0x18 + i * 8]), v = be32(&x[0x18 + i * 8 + 4]);
         if (k == 0x000003FF) ffi = v;
         if (k == 0x000002FF) resInfo = v;
     }
-    if (!ffi || secOff + 8 + 256 + 4 + 8 > x.size()) { std::fprintf(stderr, "ERRO: cabecalho incompleto\n"); return 2; }
+    if (!ffi || !hasRange(x.size(), ffi, 8)) {
+        std::fprintf(stderr, "ERRO: cabecalho incompleto\n");
+        return 2;
+    }
+    const uint32_t infoSize = be32(&x[ffi]);
+    if (infoSize < 8 || !hasRange(x.size(), ffi, infoSize)) {
+        std::fprintf(stderr, "ERRO: FILE_FORMAT_INFO invalido\n");
+        return 2;
+    }
     uint32_t imageSize = be32(&x[secOff + 4]);
     uint32_t loadAddr = be32(&x[secOff + 8 + 256 + 4 + 4]);
     uint16_t enc = be16(&x[ffi + 4]), comp = be16(&x[ffi + 6]);
@@ -348,29 +370,52 @@ int main(int argc, char** argv) {
                     "(contornar protecao), o que o Neutro X nao faz.\n");
         return 3;
     }
+    if (!imageSize || imageSize > kMaxImageBytes) {
+        std::fprintf(stderr, "ERRO: tamanho de imagem invalido\n");
+        return 2;
+    }
     std::vector<uint8_t> image;
     if (comp == 0) {
-        image.assign(x.begin() + peOff, x.end());
-        image.resize(imageSize, 0);
+        if (!hasRange(x.size(), peOff, imageSize)) {
+            std::fprintf(stderr, "ERRO: imagem nao comprimida truncada\n");
+            return 2;
+        }
+        image.assign(x.begin() + peOff, x.begin() + peOff + imageSize);
     } else if (comp == 1) {
-        uint32_t infoSize = be32(&x[ffi]);
+        if ((infoSize - 8) % 8 != 0) {
+            std::fprintf(stderr, "ERRO: tabela de compressao basica invalida\n");
+            return 2;
+        }
         uint32_t n = (infoSize - 8) / 8;
         size_t src = peOff;
         for (uint32_t i = 0; i < n; ++i) {
             uint32_t dsz = be32(&x[ffi + 8 + i * 8]), zsz = be32(&x[ffi + 8 + i * 8 + 4]);
-            image.insert(image.end(), x.begin() + long(src), x.begin() + long(src + dsz));
+            if (!hasRange(x.size(), src, dsz) || !hasRange(imageSize, image.size(), dsz) ||
+                !hasRange(imageSize, image.size() + dsz, zsz)) {
+                std::fprintf(stderr, "ERRO: bloco de compressao basica fora dos limites\n");
+                return 2;
+            }
+            image.insert(image.end(), x.begin() + src, x.begin() + src + dsz);
             image.insert(image.end(), zsz, 0);
             src += dsz;
         }
         image.resize(imageSize, 0);
     } else if (comp == 2) {
+        if (infoSize < 36) {
+            std::fprintf(stderr, "ERRO: cabecalho LZX incompleto\n");
+            return 2;
+        }
         uint32_t windowSize = be32(&x[ffi + 8]);
+        if (windowSize < (1u << 15) || windowSize > (1u << 21) || (windowSize & (windowSize - 1))) {
+            std::fprintf(stderr, "ERRO: janela LZX invalida\n");
+            return 2;
+        }
         uint32_t blockSize = be32(&x[ffi + 12]);
         std::vector<uint8_t> lzx;
         size_t p = peOff;
         int blocks = 0;
         while (blockSize) {
-            if (p + blockSize > x.size() || p + 24 > x.size()) { std::fprintf(stderr, "ERRO: bloco comprimido truncado\n"); return 2; }
+            if (blockSize < 24 || !hasRange(x.size(), p, blockSize)) { std::fprintf(stderr, "ERRO: bloco comprimido truncado\n"); return 2; }
             size_t next = p + blockSize;
             uint32_t nextSize = be32(&x[p]);
             size_t q = p + 24;  // pula (tamanho + SHA-1) do proximo bloco
@@ -400,26 +445,50 @@ int main(int argc, char** argv) {
     bool pe = image.size() > 0x40 && image[0] == 'M' && image[1] == 'Z';
     if (pe) {
         uint32_t lfanew = uint32_t(image[0x3C]) | (uint32_t(image[0x3D]) << 8) | (uint32_t(image[0x3E]) << 16) | (uint32_t(image[0x3F]) << 24);
-        pe = lfanew + 4 < image.size() && std::memcmp(&image[lfanew], "PE\0\0", 4) == 0;
+        pe = hasRange(image.size(), lfanew, 4) && std::memcmp(&image[lfanew], "PE\0\0", 4) == 0;
     }
     std::printf("verificacao PE: %s\n", pe ? "ok (MZ + PE)" : "FALHOU");
     if (!pe) return 2;
-    std::filesystem::create_directories(std::filesystem::u8path(std::string(argv[2]) + "/recursos"));
+    uint32_t resourceCount = 0;
+    if (resInfo) {
+        if (!hasRange(x.size(), resInfo, 4)) {
+            std::fprintf(stderr, "ERRO: tabela RESOURCE_INFO truncada\n");
+            return 2;
+        }
+        const uint32_t size = be32(&x[resInfo]);
+        if (size < 4 || (size - 4) % 16 != 0 || !hasRange(x.size(), resInfo, size)) {
+            std::fprintf(stderr, "ERRO: tabela RESOURCE_INFO invalida\n");
+            return 2;
+        }
+        resourceCount = (size - 4) / 16;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::u8path(std::string(argv[2]) + "/recursos"), ec);
+    if (ec) {
+        std::fprintf(stderr, "ERRO: nao foi possivel criar a pasta de saida\n");
+        return 2;
+    }
     std::string out = std::string(argv[2]) + "/imagem.bin";
     if (!writeFile(out, image.data(), image.size())) { std::fprintf(stderr, "ERRO: nao foi possivel gravar %s\n", out.c_str()); return 2; }
     int nres = 0;
-    if (resInfo) {
-        uint32_t sz = be32(&x[resInfo]);
-        for (uint32_t i = 0; i < (sz - 4) / 16; ++i) {
-            const uint8_t* e = &x[resInfo + 4 + i * 16];
-            char name[9] = {};
-            std::memcpy(name, e, 8);
-            uint32_t addr = be32(e + 8), rsz = be32(e + 12);
-            if (addr < loadAddr || addr - loadAddr + rsz > image.size()) continue;
-            std::string rp = std::string(argv[2]) + "/recursos/" + name + ".bin";
-            if (writeFile(rp, &image[addr - loadAddr], rsz)) ++nres;
+    for (uint32_t i = 0; i < resourceCount; ++i) {
+        const uint8_t* e = &x[resInfo + 4 + i * 16];
+        char name[9] = {};
+        std::memcpy(name, e, 8);
+        const std::string resource(name);
+        const uint32_t addr = be32(e + 8), size = be32(e + 12);
+        if (resource.empty() || resource.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") !=
+                std::string::npos || !size || addr < loadAddr || !hasRange(image.size(), addr - loadAddr, size)) {
+            std::fprintf(stderr, "ERRO: entrada RESOURCE_INFO %u invalida\n", i);
+            return 2;
         }
+        const std::string output = std::string(argv[2]) + "/recursos/" + resource + ".bin";
+        if (!writeFile(output, &image[addr - loadAddr], size)) {
+            std::fprintf(stderr, "ERRO: nao foi possivel gravar %s\n", output.c_str());
+            return 2;
+        }
+        ++nres;
     }
-    std::printf("gravado: %s (%zu bytes), %d recursos\n", out.c_str(), image.size(), nres);
+    std::printf("gravados: %zu bytes de imagem e %d recursos\n", image.size(), nres);
     return 0;
 }

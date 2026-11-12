@@ -114,12 +114,13 @@ def audio_files(root):
                 raise ValueError(f"nomes conflitantes no FATX: {path}")
             files[path.name.lower()] = path
         mapping = {}
-        ini = files.get("mapeamento.ini")
-        if ini:
-            for line in ini.read_text(encoding="utf-8-sig").splitlines():
-                key, _, value = line.partition("=")
-                if key.strip() in EFFECTS:
-                    mapping[key.strip()] = value.strip()
+        for ini_name in ("mapeamento.extraido.ini", "mapeamento.ini"):
+            ini = files.get(ini_name)
+            if ini:
+                for line in ini.read_text(encoding="utf-8-sig").splitlines():
+                    key, sep, value = line.partition("=")
+                    if sep and key.strip() in EFFECTS:
+                        mapping[key.strip()] = value.strip()
         loaded = 0
         for effect in EFFECTS:
             name = mapping.get(effect, effect + ".wav")

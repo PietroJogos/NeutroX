@@ -443,6 +443,16 @@ static void testOriginalSounds() {
     CHECK(m.activeVoices() == 0);
     m.play(Sfx::Navigate);
     CHECK(m.activeVoices() == 1);
+    const int blades = int(SoundTheme::Blades6717);
+    const int navigate = int(Sfx::Navigate);
+    CHECK(m.stats().mixedOriginal[blades][navigate] == 0);
+    int16_t audible[64] = {};
+    m.setMasterVolume(0);
+    m.mix(audible, 8);
+    CHECK(m.stats().mixedOriginal[blades][navigate] == 0);
+    m.setMasterVolume(1);
+    m.mix(audible, 32);
+    CHECK(m.stats().mixedOriginal[blades][navigate] == 1);
     CHECK(m.residentOriginals() == int(SoundTheme::Blades6717));
     CHECK(m.originalBytes() > 0);
     // Trocar de dashboard descarrega o conjunto anterior (a voz do Blades sai) e carrega o novo.
@@ -2178,17 +2188,29 @@ static void testRealOriginals() {
     CHECK(total > 0);
     h.idle(3.0f);
     h.waitIdle();
-    // O dashboard com originais toca os arquivos reais (vozes criadas no tema certo)
+    // Exercita cada slot com o PCM real e confirma silêncio nos ausentes.
+    std::vector<int16_t> samples(2 * kAudioRate * 12);
     for (int d = 0; d < kDashboardCount; ++d) {
         h.app.openDashboard(DashboardId(d));
         h.waitIdle();
-        CHECK(h.plat.mixer().theme() == soundThemeFor(DashboardId(d)));
-        h.plat.mixer().stopAll();
-        h.plat.mixer().play(Sfx::Confirm);
-        int voices = h.plat.mixer().activeVoices();
-        bool hasOrig = rep.e[int(soundThemeFor(DashboardId(d)))][int(Sfx::Confirm)].status == OrigStatus::Loaded;
-        CHECK(voices == (hasOrig ? 1 : 0));  // sem original: mudo, sem substituicao
-        CHECK(h.plat.mixer().residentOriginals() == int(soundThemeFor(DashboardId(d))));
+        const SoundTheme theme = soundThemeFor(DashboardId(d));
+        Mixer& mixer = h.plat.mixer();
+        CHECK(mixer.theme() == theme);
+        CHECK(mixer.residentOriginals() == int(theme));
+        mixer.setMasterVolume(1);
+        for (int s = 0; s < kSfxCount; ++s) {
+            mixer.stopAll();
+            const bool loaded = rep.e[int(theme)][s].status == OrigStatus::Loaded;
+            const uint64_t prior = mixer.stats().mixedOriginal[int(theme)][s];
+            mixer.play(Sfx(s));
+            CHECK(mixer.activeVoices() == (loaded ? 1 : 0));
+            const int frames = loaded ? int(samples.size() / 2) : 16;
+            mixer.mix(samples.data(), frames);
+            const bool signal = std::any_of(samples.begin(), samples.begin() + 2 * frames,
+                                            [](int16_t sample) { return sample != 0; });
+            CHECK(signal == loaded);
+            CHECK(mixer.stats().mixedOriginal[int(theme)][s] == prior + uint64_t(loaded));
+        }
     }
     h.app.openMainMenu();
     h.waitIdle();

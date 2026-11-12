@@ -253,13 +253,19 @@ void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::v
     std::string names[kSfxCount];
     for (int s = 0; s < kSfxCount; ++s) names[s] = std::string(sfxFileName(Sfx(s))) + ".wav";
     std::vector<uint8_t> bytes;
-    if (hasFile("mapeamento.ini") && readFile(dir + "mapeamento.ini", bytes, 64 * 1024))
+    bool mapped[kSfxCount] = {};
+    auto mapping = [&](const char* ini) {
+        if (!readFile(dir + ini, bytes, 64 * 1024) || bytes.size() > 64 * 1024) return;
         forEachIni(bytes, [&](const std::string& k, const std::string& v) {
-            if (v.empty() || v.front() == '/' || v.front() == '\\' ||
-                v.find(':') != std::string::npos || v.find("..") != std::string::npos) return;  // so arquivos dentro da pasta
+            if (v.empty() || v.front() == '/' || v.front() == '\\' || v.find('\0') != std::string::npos ||
+                v.find(':') != std::string::npos || v.find("..") != std::string::npos) return;
             for (int s = 0; s < kSfxCount; ++s)
-                if (k == sfxFileName(Sfx(s))) names[s] = v;
+                if (k == sfxFileName(Sfx(s))) { names[s] = v; mapped[s] = true; }
         });
+    };
+    // O FATX pode resolver um caminho mesmo quando a listagem não o retornou.
+    if (hasFile("mapeamento.extraido.ini")) mapping("mapeamento.extraido.ini");
+    mapping("mapeamento.ini");
     // ausentes.ini (opcional, gerado pelo extrator): efeito=causa da ausencia
     std::string causes[kSfxCount];
     if (hasFile("ausentes.ini") && readFile(dir + "ausentes.ini", bytes, 64 * 1024))
@@ -283,17 +289,26 @@ void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::v
     rep.filesInFolder[t] = 0;
     for (const DirEntry& file : files)
         if (!file.isDir && endsWithNoCase(file.name, ".wav")) ++rep.filesInFolder[t];
+    std::vector<std::string> confirmedUnlisted;
     for (int s = 0; s < kSfxCount; ++s) {
         OrigEntry& entry = rep.e[t][s];
         entry = OrigEntry();
         entry.file = dir + names[s];
-        if (!hasFile(names[s])) {
+        if (!mapped[s] && !hasFile(names[s])) {
             entry.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
             continue;
         }
         std::vector<int16_t> pcm;
         readSound(entry, causes[s], bytes, pcm);
-        if (keep && entry.status == OrigStatus::Loaded) (*keep)[size_t(s)] = std::move(pcm);
+        if (entry.status == OrigStatus::Loaded) {
+            const std::string name = toLowerAscii(names[s]);
+            if (!hasFile(names[s]) &&
+                std::find(confirmedUnlisted.begin(), confirmedUnlisted.end(), name) == confirmedUnlisted.end()) {
+                confirmedUnlisted.push_back(name);
+                ++rep.filesInFolder[t];
+            }
+            if (keep) (*keep)[size_t(s)] = std::move(pcm);
+        }
     }
 }
 
