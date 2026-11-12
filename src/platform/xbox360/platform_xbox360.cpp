@@ -81,9 +81,8 @@ public:
         height_ = h;
         if (w != 1280 || h != 720) renderer_.resize(int(w), int(h));  // ex.: 640x480 em saida entrelacada
         xsdk_log_write("neutrox: tela %ux%u", unsigned(w), unsigned(h));
-        // Rasterizacao em 6 faixas: a thread principal (hardware 0) e uma auxiliar em
-        // cada thread de hardware 1..5 do Xenon (docs/GUIDE.md do xsdk, "Threads").
-        renderer_.setThreads(6, [](int i) {
+        // Reserva a ultima thread de hardware para a alimentacao de audio.
+        renderer_.setThreads(5, [](int i) {
             const NTSTATUS ms = xsdk_thread_move(uint32_t(i));
             if (!NT_SUCCESS(ms)) xsdk_log_write("neutrox: xsdk_thread_move(%d) 0x%08X", i, unsigned(ms));
         });
@@ -131,16 +130,29 @@ public:
     }
 
     void shutdown() {
+        renderer_.setThreads(1);  // junta as faixas antes de devolver os dispositivos ao XAM
         stopAudio();
-        if (lastFence_) xsdk_gpu_wait(lastFence_, kFenceTimeoutMs);
-        if (presentOpen_) { xsdk_present_close(); presentOpen_ = false; }
+        if (lastFence_) {
+            xsdk_log_write("neutrox: aguardando cerca final da GPU");
+            const NTSTATUS status = xsdk_gpu_wait(lastFence_, kFenceTimeoutMs);
+            if (!NT_SUCCESS(status)) xsdk_log_write("neutrox: cerca final: 0x%08X", unsigned(status));
+            lastFence_ = 0;
+        }
+        if (presentOpen_) {
+            xsdk_log_write("neutrox: devolvendo apresentacao ao XAM");
+            xsdk_present_close();
+            presentOpen_ = false;
+            xsdk_log_write("neutrox: apresentacao encerrada");
+        }
         if (vertices_) { xsdk_gpu_free(vertices_); vertices_ = nullptr; }
         if (texOpen_) { xsdk_texture_free(&frameTex_); texOpen_ = false; }
         if (shadersLoaded_) { xsdk_shader_free(&ps_); xsdk_shader_free(&vs_); shadersLoaded_ = false; }
         if (gpuOpen_) {
+            xsdk_log_write("neutrox: fechando GPU");
             NTSTATUS st = xsdk_gpu_close();
             if (!NT_SUCCESS(st)) xsdk_log_write("neutrox: xsdk_gpu_close 0x%08X", unsigned(st));
             gpuOpen_ = false;
+            xsdk_log_write("neutrox: GPU encerrada (0x%08X)", unsigned(st));
         }
     }
 
@@ -299,7 +311,11 @@ private:
                        (spkOk ? (spk == XSDK_AUDIO_SPEAKERS_SURROUND ? "5.1" : "estereo") : "desconhecida");
         audioOpen_ = true;
         audioRun_ = true;
-        audioThread_ = std::thread([this]() { audioLoop(); });
+        audioThread_ = std::thread([this]() {
+            const NTSTATUS st = xsdk_thread_move(5);
+            if (!NT_SUCCESS(st)) xsdk_log_write("neutrox: afinidade de audio 0x%08X", unsigned(st));
+            audioLoop();
+        });
         xsdk_log_write("neutrox: %s", audioDetail_.c_str());
     }
     void stopAudio() {
@@ -312,9 +328,11 @@ private:
         std::memset(&st, 0, sizeof st);
         xsdk_audio_stats(&st);
         xsdk_log_write("neutrox: audio: %u quadros tocados, %u de silencio por atraso", unsigned(st.played), unsigned(st.silent));
+        xsdk_log_write("neutrox: encerrando cliente do driver de audio");
         const NTSTATUS cs = xsdk_audio_close();
         if (!NT_SUCCESS(cs)) xsdk_log_write("neutrox: xsdk_audio_close 0x%08X", unsigned(cs));
         audioOpen_ = false;
+        xsdk_log_write("neutrox: cliente de audio encerrado (0x%08X)", unsigned(cs));
     }
     void audioLoop() {
         const double step = double(kAudioRate) / double(XSDK_AUDIO_RATE_HZ);  // amostras de 44,1k por amostra de 48k
@@ -404,6 +422,9 @@ std::string runNeutroX(int& code) {
             app.shutdown();
         }
     }
+    if (!launch.empty())
+        xsdk_log_write("neutrox: destino antes de liberar dispositivos: %s (%s)", launch.c_str(),
+                       fileExists(launch) ? "arquivo presente" : "arquivo indisponivel");
     xsdk_log_write("neutrox: liberando audio, GPU e tela");
     platform.shutdown();
     return launch;
@@ -415,7 +436,9 @@ int main() {
     xsdk_log_write("neutrox: Neutro X %s para Xbox 360 (xsdk)", kNeutroXVersion);
     int code = 0;
     const std::string launch = runNeutroX(code);
-    if (!launch.empty()) {
+    if (!launch.empty() && !fileExists(launch)) {
+        xsdk_log_write("neutrox: destino indisponivel apos encerramento: %s; terminando apenas o titulo", launch.c_str());
+    } else if (!launch.empty()) {
         // Troca de aplicativo: o xsdk encerra o titulo (exit) e o XAM inicia o .xex pedido.
         xsdk_log_write("neutrox: iniciando %s", launch.c_str());
         xsdk_launch(launch.c_str(), nullptr, 0);

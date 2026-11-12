@@ -539,6 +539,12 @@ static void testOriginalSounds() {
         tempDir("legado/sons_originais");
         Harness hl(d);
         CHECK(hl.app.originalSoundsDir() == d + "sons_originais/");
+        makeDirs(d + "local_audio/blades_6717");
+        makeDirs(d + "sons_originais/blades_6717");
+        writeBytes(d + "sons_originais/blades_6717/navegar.wav", bytes);
+        CHECK(hl.app.originalSoundsDir() == d + "sons_originais/");
+        writeBytes(d + "local_audio/blades_6717/navegar.wav", bytes);
+        CHECK(hl.app.originalSoundsDir() == d + "local_audio/");
         std::string d2 = tempDir("novo");
         Harness hn(d2);
         CHECK(hn.app.originalSoundsDir() == d2 + "local_audio/");
@@ -557,6 +563,16 @@ static void testAppFlow() {
     CHECK(std::string(h.app.topScreenName()) == "MainMenu");
     h.idle(1.0f);
     h.shot("02_menu_principal");
+
+    auto& renderer = h.plat.soft();
+    const size_t pixels = size_t(renderer.pixelWidth()) * renderer.pixelHeight();
+    const std::vector<uint32_t> first(renderer.pixels(), renderer.pixels() + pixels);
+    h.idle(1.5f);
+    CHECK(std::equal(first.begin(), first.end(), renderer.pixels()));
+    h.tap(Button::Up);  // Blades -> Sair
+    CHECK(!std::equal(first.begin(), first.end(), renderer.pixels()));
+    h.tap(Button::Down);  // Sair -> Blades
+    CHECK(std::equal(first.begin(), first.end(), renderer.pixels()));
 
     // Seleciona cada dashboard pelo menu e verifica carga + navegacao.
     const char* shots[] = {"03_blades", "04_nxe", "05_kinect", "06_metro_v1", "07_metro_v2"};
@@ -1587,6 +1603,7 @@ static void testLibraryScan() {
         makeDirs(parentPath(path));
         writeFileAtomic(path, b.data(), b.size());
     };
+    put(hdd + "Games/default.xex", makeTestXex(0x41410003, 0x13, 0x09));  // DLL não bloqueia os jogos abaixo
     put(hdd + "Games/Jogo A/default.xex", makeTestXex(0x41410001, 0x11));
     put(hdd + "Games/Jogo A/media/extra.xex", makeTestXex(0x41410002, 0x12));  // dentro de um jogo: nao entra
     put(hdd + "Games/Modulo DLL/default.xex", makeTestXex(0x41410003, 0x13, 0x09));
@@ -1603,6 +1620,23 @@ static void testLibraryScan() {
     put(hdd + "Content/0000000000000000/FFFE07D1/00010000/SaveDeJogo", makeTestStfs("CON ", 0x00000001, 0xFFFE07D1, "Save", {}));
     put(usb + "Games/Jogo A (copia)/default.xex", makeTestXex(0x41410001, 0x11));  // mesma Media ID: duplicata
 
+    {
+        const std::string data = freshDir("lib_auto");
+        CHECK(writeFileAtomic(data + "biblioteca.ini", "[opcoes]\ncapas_automaticas=0\n"));
+        Harness h(data, 640, 480, false);
+        h.plat.setRoots({{hdd, "Disco", "Hdd1"}, {usb, "USB", "Usb0"}});
+        h.plat.setLaunchable(true);
+        CHECK(h.app.init());
+        CHECK(h.app.library().folders().size() == 3);
+        for (int i = 0; i < 400 && h.app.library().games().empty(); ++i) {
+            h.step(0, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(!h.app.library().games().empty());
+        h.app.shutdown();
+        Library saved;
+        CHECK(saved.load(data + "biblioteca.ini") && saved.options().foldersInitialized && saved.folders().size() == 3);
+    }
     Library lib;
     std::string why;
     CHECK(lib.addFolder(hdd + "Games", &why));
@@ -1774,6 +1808,9 @@ struct TestHttpServer {
 
 static void testCovers() {
     section("Capas: download do XboxUnity (servidor local de teste), validacao, cache e modo offline");
+    int count = 0;
+    CHECK(pickCoverId("<html>offline</html>", &count).empty() && count == -1);
+    CHECK(pickCoverId(R"({"Covers":[],"CoversCount":0})", &count).empty() && count == 0);
     TestHttpServer srv;
     srv.cover = readFixture("capa_teste.jpg");
     CHECK(srv.start());

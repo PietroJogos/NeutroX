@@ -75,7 +75,7 @@ bool App::init() {
         coverSvc_.setDirs(base + "capas/", base + "capas_importar/");
         coverTex_.setDir(base + "capas/");
         lib_.refreshAvailability();
-        if (lib_.options().scanOnStart && !lib_.folders().empty()) startLibraryScan(false);
+        if (lib_.options().scanOnStart) startLibraryScan(false);
         publishLibrary();
     }
     buildPreviews();
@@ -158,13 +158,20 @@ void App::applySettings() {
 
 std::string App::originalSoundsDir() const {
     const std::string base = platform_.dataPath();
-    // Pasta atual: local_audio/. A antiga sons_originais/ continua aceita quando e a unica existente.
-    try {
-        auto isDir = [](const std::string& p) { return std::filesystem::is_directory(std::filesystem::u8path(p)); };
-        if (!isDir(base + "local_audio") && isDir(base + "sons_originais")) return base + "sons_originais/";
-    } catch (const std::exception&) {
-    }
-    return base + "local_audio/";
+    const std::string current = base + "local_audio/";
+    const std::string legacy = base + "sons_originais/";
+    if (!dirExists(legacy)) return current;
+    if (!dirExists(current)) return legacy;
+    auto hasWav = [](const std::string& root) {
+        for (int t = 1; t < kSoundThemeCount; ++t) {
+            std::vector<DirEntry> files;
+            if (!listDir(joinPath(root, soundThemeInfo(SoundTheme(t)).folder), files)) continue;
+            for (const DirEntry& file : files)
+                if (!file.isDir && endsWithNoCase(file.name, ".wav")) return true;
+        }
+        return false;
+    };
+    return !hasWav(current) && hasWav(legacy) ? legacy : current;
 }
 
 void App::reloadOriginalSounds() {
@@ -498,6 +505,21 @@ void App::saveLibrary(bool force) {
 }
 
 bool App::startLibraryScan(bool manual) {
+    if (lib_.folders().empty() && platform_.canLaunchTitles() && (manual || !lib_.options().foldersInitialized)) {
+        for (const StorageRoot& root : platform_.storageRoots()) {
+            std::vector<DirEntry> entries;
+            if (!listDir(root.path, entries)) continue;
+            for (const DirEntry& entry : entries) {
+                if (!entry.isDir) continue;
+                const std::string name = toLowerAscii(entry.name);
+                std::string path = joinPath(root.path, entry.name);
+                if (name == "content") path = joinPath(path, "0000000000000000");
+                else if (name != "games" && name != "jogos" && name != "games e homebrews") continue;
+                if (lib_.addFolder(path))
+                    logInfo("Biblioteca: pasta detectada: %s", path.c_str());
+            }
+        }
+    }
     if (lib_.folders().empty()) {
         if (manual) toast("Nenhuma pasta de jogos configurada (Configurações > Jogos > Gerenciar pastas)");
         return false;
@@ -511,6 +533,18 @@ bool App::startLibraryScan(bool manual) {
 void App::requestCover(const std::string& gameId, bool force, bool manual) {
     GameEntry* g = lib_.find(gameId);
     if (!g) return;
+    if (manual) {
+        GameEntry current;
+        LibraryOptions all;
+        all.typeApps = true;
+        std::string why;
+        if (!Library::probeFile(g->path, all, current, &why) || current.titleId != g->titleId) {
+            toast("Arquivo ou Title ID mudou. Atualize o título na biblioteca.");
+            logWarn("Capa %s: identidade nao confirmada em %s (%s)", hex8(g->titleId).c_str(), g->path.c_str(), why.c_str());
+            return;
+        }
+        logInfo("Capa: Title ID %s confirmado no arquivo %s", hex8(current.titleId).c_str(), current.path.c_str());
+    }
     coverSvc_.request(g->id, g->titleId, force, manual);
 }
 
@@ -603,7 +637,7 @@ void App::pollLibrary(float dt) {
     }
     for (const CoverResult& r : coverSvc_.takeResults()) {
         GameEntry* g = lib_.find(r.gameId);
-        if (r.ok && g) {
+        if (r.ok && g && (g->coverSource != 2 || r.manual)) {
             if (g->cover != r.file) coverTex_.invalidate(*ctx_.renderer, g->cover);
             coverTex_.invalidate(*ctx_.renderer, r.file);
             g->cover = r.file;
@@ -684,6 +718,8 @@ void App::frame(const RawPadState& raw, float dt) {
     }
 
     runPending();
+    if (quit_) return;  // a transferencia nao precisa enfileirar outro quadro
+    const double tServices = platform_.timeSeconds();
     if (toastT_ > 0) toastT_ -= dt;
     pollLibrary(dt);
     profileTimer_ += dt;
@@ -691,6 +727,7 @@ void App::frame(const RawPadState& raw, float dt) {
     audioCheckTimer_ += dt;
     if (audioCheckTimer_ >= 1.0f) { audioCheckTimer_ = 0; checkAudioDiagnostics(); }
 
+    const double tAudio = platform_.timeSeconds();
     // Tema sonoro segue a tela do topo: dashboard -> sons da versao;
     // telas do Neutro X (menus, configuracoes, overlays) -> sons do Neutro X.
     {
@@ -756,6 +793,9 @@ void App::frame(const RawPadState& raw, float dt) {
                 logWarn("Quadro lento em %s: %.1f ms (atualizacao %.1f, desenho %.1f, apresentacao %.1f)%s", key.c_str(),
                         double(stats_.frameMs), double(stats_.updateMs), double(stats_.renderMs), double(stats_.presentMs),
                         nav ? " ao navegar" : "");
+                if (stats_.updateMs >= 16.0f)
+                    logInfo("Atualizacao: entrada/tela %.1f ms, servicos %.1f ms, troca de audio %.1f ms",
+                            (tServices - t0) * 1000.0, (tAudio - tServices) * 1000.0, (tUpdate - tAudio) * 1000.0);
             }
         }
     }

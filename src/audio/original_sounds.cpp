@@ -5,11 +5,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <exception>
-#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include "audio/audio.h"
+#include "core/fsutil.h"
 
 namespace nx {
 
@@ -41,8 +40,9 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out, size_t maxByte
         out.insert(out.end(), buf, buf + n);
         if (out.size() > maxBytes) break;
     }
+    const bool ok = !std::ferror(f);
     std::fclose(f);
-    return true;
+    return ok;
 }
 
 std::string trim(const std::string& s) {
@@ -56,7 +56,7 @@ std::string trim(const std::string& s) {
 template <class F>
 void forEachIni(const std::vector<uint8_t>& bytes, F fn) {
     std::string text(bytes.begin(), bytes.end());
-    size_t pos = 0;
+    size_t pos = text.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
     while (pos < text.size()) {
         size_t nl = text.find('\n', pos);
         std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
@@ -90,13 +90,23 @@ bool decodeWav(const std::vector<uint8_t>& d, std::vector<int16_t>& out, std::st
     }
     uint16_t fmt = 0, ch = 0, bits = 0;
     uint32_t rate = 0;
+    const size_t riffBytes = le32(d.data() + 4);
+    if (riffBytes < 4 || riffBytes > d.size() - 8) {
+        reason = "arquivo WAV truncado";
+        return false;
+    }
+    const size_t end = riffBytes + 8;
     const uint8_t* pcm = nullptr;
     size_t pcmBytes = 0;
     size_t p = 12;
-    while (p + 8 <= d.size()) {
+    while (p + 8 <= end) {
         uint32_t sz = le32(&d[p + 4]);
         const uint8_t* body = &d[p + 8];
-        size_t avail = d.size() - (p + 8);
+        const size_t avail = end - (p + 8);
+        if (sz > avail || (sz == avail && (sz & 1))) {
+            reason = "bloco WAV truncado";
+            return false;
+        }
         if (std::memcmp(&d[p], "fmt ", 4) == 0 && sz >= 16 && avail >= 16) {
             fmt = le16(body);
             ch = le16(body + 2);
@@ -105,9 +115,13 @@ bool decodeWav(const std::vector<uint8_t>& d, std::vector<int16_t>& out, std::st
             if (fmt == 0xFFFE && sz >= 40 && avail >= 40) fmt = le16(body + 24);  // WAVE_FORMAT_EXTENSIBLE
         } else if (std::memcmp(&d[p], "data", 4) == 0) {
             pcm = body;
-            pcmBytes = std::min<size_t>(sz, avail);
+            pcmBytes = sz;
         }
         p += 8 + sz + (sz & 1);
+    }
+    if (p != end) {
+        reason = "cabeçalho de bloco WAV truncado";
+        return false;
     }
     if (fmt == 0x0165 || fmt == 0x0166) {
         reason = "formato XMA/XMA2 (codec proprietário do Xbox 360) não suportado; converta para WAV PCM";
@@ -132,6 +146,10 @@ bool decodeWav(const std::vector<uint8_t>& d, std::vector<int16_t>& out, std::st
         return false;
     }
     const size_t frameBytes = size_t(ch) * (bits / 8);
+    if (pcmBytes % frameBytes != 0) {
+        reason = "dados WAV não alinhados";
+        return false;
+    }
     const size_t frames = pcmBytes / frameBytes;
     if (double(frames) / rate > 12.0) {
         reason = "áudio longo demais para efeito sonoro (máximo 12 s)";
@@ -194,22 +212,57 @@ size_t Mixer::originalBytes() {
     return n;
 }
 
+namespace {
+void readSound(OrigEntry& entry, const std::string& cause, std::vector<uint8_t>& bytes, std::vector<int16_t>& pcm) {
+    constexpr size_t kMaxWavBytes = 16u * 1024u * 1024u;
+    entry.status = OrigStatus::Missing;
+    entry.seconds = 0;
+    pcm.clear();
+    if (!readFile(entry.file, bytes, kMaxWavBytes)) {
+        entry.reason = cause.empty() ? "arquivo não encontrado" : cause;
+        return;
+    }
+    if (bytes.size() > kMaxWavBytes) {
+        entry.status = OrigStatus::Invalid;
+        entry.reason = "arquivo grande demais (máximo 16 MB)";
+        return;
+    }
+    if (!decodeWav(bytes, pcm, entry.reason)) {
+        entry.status = entry.reason.find("XMA") != std::string::npos || entry.reason.find("suportado") != std::string::npos
+                           ? OrigStatus::Unsupported : OrigStatus::Invalid;
+        return;
+    }
+    entry.status = OrigStatus::Loaded;
+    entry.reason.clear();
+    entry.seconds = float(pcm.size()) / kAudioRate;
+}
+}  // namespace
+
 void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::vector<std::vector<int16_t>>* keep) {
     const SoundThemeInfo& ti = soundThemeInfo(SoundTheme(t));
     const std::string dir = baseDir + ti.folder + "/";
+    std::vector<DirEntry> files;
+    const bool listed = listDir(dir, files);
+    auto hasFile = [&](const std::string& name) {
+        if (!listed || name.find_first_of("/\\") != std::string::npos) return fileExists(dir + name);
+        for (const DirEntry& file : files)
+            if (!file.isDir && toLowerAscii(file.name) == toLowerAscii(name)) return true;
+        return false;
+    };
     // mapeamento opcional: efeito=arquivo
     std::string names[kSfxCount];
     for (int s = 0; s < kSfxCount; ++s) names[s] = std::string(sfxFileName(Sfx(s))) + ".wav";
     std::vector<uint8_t> bytes;
-    if (readFile(dir + "mapeamento.ini", bytes, 64 * 1024))
+    if (hasFile("mapeamento.ini") && readFile(dir + "mapeamento.ini", bytes, 64 * 1024))
         forEachIni(bytes, [&](const std::string& k, const std::string& v) {
-            if (v.empty() || v.find("..") != std::string::npos) return;  // so arquivos dentro da pasta
+            if (v.empty() || v.front() == '/' || v.front() == '\\' ||
+                v.find(':') != std::string::npos || v.find("..") != std::string::npos) return;  // so arquivos dentro da pasta
             for (int s = 0; s < kSfxCount; ++s)
                 if (k == sfxFileName(Sfx(s))) names[s] = v;
         });
     // ausentes.ini (opcional, gerado pelo extrator): efeito=causa da ausencia
     std::string causes[kSfxCount];
-    if (readFile(dir + "ausentes.ini", bytes, 64 * 1024))
+    if (hasFile("ausentes.ini") && readFile(dir + "ausentes.ini", bytes, 64 * 1024))
         forEachIni(bytes, [&](const std::string& k, const std::string& v) {
             for (int s = 0; s < kSfxCount; ++s)
                 if (k == sfxFileName(Sfx(s))) causes[s] = v;
@@ -218,7 +271,7 @@ void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::v
     rep.manifestFiles[t] = rep.unconfirmed[t] = rep.convErrors[t] = rep.externalRefs[t] = -1;
     rep.situation[t].clear();
     rep.xexState[t].clear();
-    if (readFile(dir + "manifesto.ini", bytes, 256 * 1024))
+    if (hasFile("manifesto.ini") && readFile(dir + "manifesto.ini", bytes, 256 * 1024))
         forEachIni(bytes, [&](const std::string& k, const std::string& v) {
             if (k == "audios_originais") rep.manifestFiles[t] = toInt(v);
             else if (k == "nao_confirmados") rep.unconfirmed[t] = toInt(v);
@@ -227,43 +280,20 @@ void Mixer::readTheme(const std::string& baseDir, int t, OrigReport& rep, std::v
             else if (k == "situacao") rep.situation[t] = v.substr(0, 120);
             else if (k == "xex_estado") rep.xexState[t] = v.substr(0, 40);
         });
-    // conta todos os .wav da pasta (originais instalados, com ou sem funcao)
     rep.filesInFolder[t] = 0;
-    try {
-        std::filesystem::path p = std::filesystem::u8path(dir);
-        if (std::filesystem::is_directory(p))
-            for (const auto& de : std::filesystem::directory_iterator(p)) {
-                std::string ext = de.path().extension().u8string();
-                for (char& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-                if (de.is_regular_file() && ext == ".wav") rep.filesInFolder[t]++;
-            }
-    } catch (const std::exception&) {
-    }
+    for (const DirEntry& file : files)
+        if (!file.isDir && endsWithNoCase(file.name, ".wav")) ++rep.filesInFolder[t];
     for (int s = 0; s < kSfxCount; ++s) {
-        OrigEntry& en = rep.e[t][s];
-        en = OrigEntry();
-        en.file = dir + names[s];
-        if (!readFile(en.file, bytes, 16u * 1024u * 1024u)) {
-            en.status = OrigStatus::Missing;
-            en.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
-            continue;
-        }
-        if (bytes.size() > 16u * 1024u * 1024u) {
-            en.status = OrigStatus::Invalid;
-            en.reason = "arquivo grande demais (máximo 16 MB)";
+        OrigEntry& entry = rep.e[t][s];
+        entry = OrigEntry();
+        entry.file = dir + names[s];
+        if (!hasFile(names[s])) {
+            entry.reason = causes[s].empty() ? "arquivo não encontrado" : causes[s];
             continue;
         }
         std::vector<int16_t> pcm;
-        std::string why;
-        if (!decodeWav(bytes, pcm, why)) {
-            en.status = why.find("XMA") != std::string::npos || why.find("suportado") != std::string::npos
-                            ? OrigStatus::Unsupported : OrigStatus::Invalid;
-            en.reason = why;
-            continue;
-        }
-        en.status = OrigStatus::Loaded;
-        en.seconds = float(pcm.size()) / kAudioRate;
-        if (keep) (*keep)[size_t(s)] = std::move(pcm);
+        readSound(entry, causes[s], bytes, pcm);
+        if (keep && entry.status == OrigStatus::Loaded) (*keep)[size_t(s)] = std::move(pcm);
     }
 }
 
@@ -291,14 +321,16 @@ void Mixer::loadOriginals(const std::string& baseDir) {
 }
 
 void Mixer::makeResident(int t) {
-    std::string base;
+    OrigEntry entries[kSfxCount];
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        base = origBase_;
+        for (int s = 0; s < kSfxCount; ++s) entries[s] = report_.e[t][s];
     }
-    OrigReport tmp;
     std::vector<std::vector<int16_t>> pcm(kSfxCount);
-    readTheme(base, t, tmp, &pcm);
+    std::vector<uint8_t> bytes;
+    // As ausencias e os nomes ja foram apurados na verificacao da pasta.
+    for (int s = 0; s < kSfxCount; ++s)
+        if (entries[s].status == OrigStatus::Loaded) readSound(entries[s], "", bytes, pcm[size_t(s)]);
     std::lock_guard<std::mutex> lock(mtx_);
     // Descarrega o conjunto anterior: vozes que tocam um original saem antes da troca.
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
@@ -310,7 +342,7 @@ void Mixer::makeResident(int t) {
                   voices_.end());
     orig_.swap(pcm);
     origResident_ = t;
-    for (int s = 0; s < kSfxCount; ++s) report_.e[t][s] = tmp.e[t][s];
+    for (int s = 0; s < kSfxCount; ++s) report_.e[t][s] = std::move(entries[s]);
 }
 
 }  // namespace nx

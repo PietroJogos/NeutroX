@@ -1,6 +1,8 @@
 // Neutro X - menu inicial: selecao das cinco interfaces, configuracoes, sobre e sair.
+#include <array>
 #include <string>
-#include "core/anim.h"
+#include <tuple>
+#include "graphics/scene_cache.h"
 #include "shell/screens.h"
 #include "shell/shell_common.h"
 
@@ -40,36 +42,22 @@ public:
     const char* name() const override { return "MainMenu"; }
 
     void onEnter(Context& ctx) override {
-        enter_.start(0.7f);
-        // Restaura a ultima selecao (ou o dashboard ativo/padrao).
         const DashboardInfo* def = findDashboard(ctx.settings->defaultDashboard);
         if (def) sel_ = int(def->id);
-        hlY_.snap(itemY(sel_));
-        hlH_.snap(itemH(sel_));
-        prevSel_ = sel_;
-        swap_.t = 1;
-        backdrop_.ensure(ctx);
     }
 
-    void onExit(Context& ctx) override { backdrop_.release(ctx); }
+    void onExit(Context& ctx) override {
+        scene_.release(*ctx.renderer);
+        backdrop_.release(ctx);
+    }
 
-    void update(Context& ctx, const InputFrame& in, float dt) override {
-        enter_.update(dt);
-        swap_.update(dt);
-        hlY_.update(dt);
-        hlH_.update(dt);
+    void update(Context& ctx, const InputFrame& in, float) override {
         int before = sel_;
         if (in.press(Button::Down)) sel_ = (sel_ + 1) % kItemCount;
         if (in.press(Button::Up)) sel_ = (sel_ + kItemCount - 1) % kItemCount;
         if (in.press(Button::RB)) sel_ = sel_ < 5 ? 5 : 0;  // salta entre grupos (dashboards / demais)
         if (in.press(Button::LB)) sel_ = sel_ >= 5 ? 0 : 5;
-        if (sel_ != before) {
-            ctx.sfx(Sfx::Navigate);
-            prevSel_ = before;
-            swap_.start(0.28f);
-            hlY_.set(itemY(sel_));
-            hlH_.set(itemH(sel_));
-        }
+        if (sel_ != before) ctx.sfx(Sfx::Navigate);
         if (in.press(Button::A)) activate(ctx, sel_);
         if (in.press(Button::Y)) { ctx.sfx(Sfx::Open); ctx.app->openSettings(); }
         if (in.press(Button::B)) activate(ctx, kItemCount - 1);  // B = sair (com confirmacao)
@@ -115,22 +103,41 @@ public:
     }
 
     void render(Context& ctx, IRenderer& r) override {
-        backdrop_.draw(ctx, r);
-        const Color accent = ctx.accent();
-        const float e = enter_.progress();
+        if (r.pixelWidth() != width_ || r.pixelHeight() != height_) {
+            width_ = r.pixelWidth();
+            height_ = r.pixelHeight();
+            scene_.init(r);
+        }
+        if (ctx.time >= clockAt_) {
+            ctx.platform->localTime(clock_[0], clock_[1], clock_[2], clock_[3], clock_[4]);
+            clockAt_ = ctx.time + 1.0;
+        }
+        const Settings& settings = *ctx.settings;
+        const bool libraryPanel = kItems[sel_].kind == ItemKind::Library;
+        const Visual state{sel_, settings.accentTheme, settings.defaultDashboard, settings.sfxVolume,
+                           settings.animations, settings.animIntensity, clock_,
+                           libraryPanel ? ctx.app->library().version() : 0,
+                           libraryPanel && ctx.app->libraryScanning()};
+        if (state != visual_) {
+            visual_ = state;
+            scene_.invalidate();
+        }
+        scene_.draw(r, false, 0, [&](IRenderer& canvas) { paint(ctx, canvas); });
+    }
 
-        drawNeutroLogo(r, 56, 36, 50, accent, clampf(e * 1.4f, 0, 1));
+private:
+    void paint(Context& ctx, IRenderer& r) {
+        backdrop_.drawStatic(ctx, r);
+        const Color accent = ctx.accent();
+        drawNeutroLogo(r, 56, 36, 50, accent, 1);
         TextStyle sub;
         sub.size = 19;
         sub.tracking = 1.2f;
         sub.color = Color(150, 160, 172);
-        r.pushAlpha(clampf(e * 2 - 0.4f, 0, 1));
         r.drawText("Xbox 360 Dashboard Experience", 60, 98, sub);
-        r.popAlpha();
-        drawClock(ctx, r, 1224, 40, Color(220, 226, 234));
-
-        renderList(ctx, r, e);
-        renderPanel(ctx, r, e);
+        drawClockValues(r, 1224, 40, Color(220, 226, 234), clock_[0], clock_[1], clock_[2], clock_[3], clock_[4]);
+        renderList(ctx, r);
+        panelFor(ctx, r, sel_);
 
         r.fillRect(Rectf{0, 668, 1280, 52}, Color(0, 0, 0, 90));
         bool isDash = kItems[sel_].kind == ItemKind::Dashboard;
@@ -148,32 +155,19 @@ public:
         r.drawText(v.c_str(), 1224, 688, ver);
     }
 
-private:
-    void renderList(Context& ctx, IRenderer& r, float e) {
+    void renderList(Context& ctx, IRenderer& r) {
         const Color accent = ctx.accent();
-        // Destaque deslizante
-        float hy = hlY_.value, hh = hlH_.value;
-        Rectf hl{kListX - 6, hy - 3, kListW + 12, hh + 6};
-        r.pushAlpha(clampf(e * 2, 0, 1));
+        const Rectf hl{kListX - 6, itemY(sel_) - 3, kListW + 12, itemH(sel_) + 6};
         r.fillRoundRect(hl.offset(0, 4), 10, Color(0, 0, 0, 70));
         r.fillRoundRect(hl, 10, brighten(accent, -0.35f));
         r.pushClip(hl.inset(1));
         r.fillGradientH(hl, accent.withAlpha(230), accent.withAlpha(60));
-        float shine = std::fmod(float(ctx.time) * 0.35f, 1.6f);
-        Vec2 sh[4] = {{hl.x + (shine - 0.3f) * hl.w, hl.y}, {hl.x + (shine - 0.15f) * hl.w, hl.y},
-                      {hl.x + (shine - 0.25f) * hl.w, hl.bottom()}, {hl.x + (shine - 0.4f) * hl.w, hl.bottom()}};
-        r.fillConvex(sh, 4, Color(255, 255, 255, 28));
         r.popClip();
         r.fillRoundRect(Rectf{hl.x, hl.y + 8, 5, hl.h - 16}, 2.5f, Color(255, 255, 255, 230));
-        r.popAlpha();
 
         for (int i = 0; i < kItemCount; ++i) {
-            float local = clampf((e - 0.05f * i) / 0.5f, 0, 1);
-            float k = ease::outCubic(local);
-            float y = itemY(i), h = itemH(i);
-            bool sel = i == sel_;
-            r.pushAlpha(k);
-            r.pushOffset((1 - k) * -50, 0);
+            const float y = itemY(i), h = itemH(i);
+            const bool sel = i == sel_;
             Color tc = sel ? Color(255, 255, 255) : Color(196, 204, 214);
             if (kItems[i].kind == ItemKind::Dashboard) {
                 const DashboardInfo& info = dashboardInfo(kItems[i].dash);
@@ -216,31 +210,7 @@ private:
                 ns.color = tc;
                 r.drawText(label, kListX + 116, textTopForCenter(y + h * 0.5f, 25), ns);
             }
-            r.popOffset();
-            r.popAlpha();
         }
-    }
-
-    void renderPanel(Context& ctx, IRenderer& r, float e) {
-        float k = ease::outCubic(clampf((e - 0.15f) / 0.6f, 0, 1));
-        r.pushAlpha(k);
-        r.pushOffset((1 - k) * 60, 0);
-        float s = ease::outCubic(swap_.progress());
-        // Conteudo anterior saindo e novo entrando (crossfade com leve deslize).
-        if (s < 1 && prevSel_ != sel_) {
-            r.pushAlpha(1 - s);
-            r.pushOffset(-20 * s, 0);
-            panelFor(ctx, r, prevSel_);
-            r.popOffset();
-            r.popAlpha();
-        }
-        r.pushAlpha(s);
-        r.pushOffset(20 * (1 - s), 0);
-        panelFor(ctx, r, sel_);
-        r.popOffset();
-        r.popAlpha();
-        r.popOffset();
-        r.popAlpha();
     }
 
     void panelFor(Context& ctx, IRenderer& r, int i) {
@@ -285,9 +255,10 @@ private:
         if (kItems[i].kind == ItemKind::Library) {
             Library& lib = ctx.app->library();
             drawIcon(r, Icon::Controller, 720, 270, 130, accent, Color(22, 30, 40));
-            const int games = int(lib.view(Library::Filter::All).size());
+            const auto entries = lib.view(Library::Filter::All);
+            const int games = int(entries.size());
             int favs = 0, unavailable = 0;
-            for (int gi : lib.view(Library::Filter::All)) {
+            for (int gi : entries) {
                 favs += lib.games()[size_t(gi)].favorite;
                 unavailable += !lib.games()[size_t(gi)].available;
             }
@@ -338,10 +309,14 @@ private:
         }
     }
 
+    using Visual = std::tuple<int, int, std::string, int, bool, AnimIntensity, std::array<int, 5>, unsigned, bool>;
+    Visual visual_{};
     NeutroBackdrop backdrop_;
-    int sel_ = 0, prevSel_ = 0;
-    Smooth hlY_{0, 18}, hlH_{0, 18};
-    Tween enter_, swap_;
+    SceneCache scene_;
+    int sel_ = 0, width_ = 0, height_ = 0;
+    std::array<int, 5> clock_{0, 0, 1, 1, 2026};
+    double clockAt_ = 0;
+
 };
 
 }  // namespace

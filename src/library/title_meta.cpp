@@ -79,7 +79,7 @@ bool parseXexHeader(const uint8_t* d, size_t n, XexMeta& m) {
         if (o + 8 > n) { m.error = "cabeçalho XEX2 truncado"; return false; }
         const uint32_t key = be32(d + o), val = be32(d + o + 4);
         if (key == 0x00040006) {  // EXECUTION_INFO
-            if (size_t(val) + 24 > n) { m.error = "Execution ID fora do cabeçalho"; return false; }
+            if (val > n || n - val < 24) { m.error = "Execution ID fora do cabeçalho"; return false; }
             const uint8_t* e = d + val;
             m.mediaId = be32(e);
             m.version = be32(e + 4);
@@ -89,14 +89,14 @@ bool parseXexHeader(const uint8_t* d, size_t n, XexMeta& m) {
             m.discCount = e[19];
             m.hasExecutionId = true;
         } else if (key == 0x000003FF) {  // FILE_FORMAT_INFO
-            if (size_t(val) + 8 <= n) {
+            if (val <= n && n - val >= 8) {
                 m.encryption = be16(d + val + 4);
                 m.compression = be16(d + val + 6);
             }
         } else if (key == 0x000183FF) {  // ORIGINAL_PE_NAME
-            if (size_t(val) + 4 <= n) {
+            if (val <= n && n - val >= 4) {
                 uint32_t sz = be32(d + val);
-                if (sz > 4 && sz < 512 && size_t(val) + sz <= n) {
+                if (sz > 4 && sz < 512 && sz <= n - val) {
                     for (uint32_t k = 4; k < sz && d[val + k]; ++k) {
                         char c = char(d[val + k]);
                         if (c >= 0x20 && c < 0x7F) m.originalName.push_back(c);

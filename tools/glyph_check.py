@@ -35,7 +35,7 @@ for f in sorted(list((root / "src").rglob("*.cpp")) + list((root / "src").rglob(
             except UnicodeError:
                 pass
         for ch in lit:
-            if ord(ch) > 127 and ord(ch) not in have:
+            if ord(ch) > 127 and ch != "\ufeff" and ord(ch) not in have:
                 missing.setdefault(ch, set()).add(f.name)
 for ch, files in sorted(missing.items()):
     print(repr(ch), hex(ord(ch)), sorted(files))

@@ -14,10 +14,12 @@ class NeutroBackdrop {
 public:
     void ensure(Context& ctx) {
         Color a = ctx.accent();
-        if (tex_ != kInvalidTexture && a.argb() == accent_.argb()) return;
-        release(ctx);
         IRenderer& r = *ctx.renderer;
-        SoftRenderer canvas(r.pixelWidth(), r.pixelHeight());
+        if (tex_ != kInvalidTexture && a.argb() == accent_.argb() && width_ == r.pixelWidth() && height_ == r.pixelHeight()) return;
+        release(ctx);
+        width_ = r.pixelWidth();
+        height_ = r.pixelHeight();
+        SoftRenderer canvas(width_, height_);
         canvas.beginFrame();
         drawNeutroBackground(canvas, a);
         tex_ = r.createTexture(canvas.pixelWidth(), canvas.pixelHeight(), canvas.pixels());
@@ -27,21 +29,23 @@ public:
         if (tex_ != kInvalidTexture) ctx.renderer->destroyTexture(tex_);
         tex_ = kInvalidTexture;
     }
-    void draw(Context& ctx, IRenderer& r) {
+    void drawStatic(Context& ctx, IRenderer& r) {
         ensure(ctx);
         r.drawTexture(tex_, Rectf{0, 0, float(kLogicalW), float(kLogicalH)});
+    }
+    void draw(Context& ctx, IRenderer& r) {
+        drawStatic(ctx, r);
         drawNeutroBands(r, float(ctx.time), ctx.accent());
     }
 
 private:
     TextureId tex_ = kInvalidTexture;
     Color accent_;
+    int width_ = 0, height_ = 0;
 };
 
 // Relogio no canto superior direito.
-inline void drawClock(Context& ctx, IRenderer& r, float rightX, float y, Color color) {
-    int h = 0, m = 0, d = 1, mo = 1, yr = 2026;
-    ctx.platform->localTime(h, m, d, mo, yr);
+inline void drawClockValues(IRenderer& r, float rightX, float y, Color color, int h, int m, int d, int mo, int yr) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
     TextStyle st;
@@ -53,6 +57,12 @@ inline void drawClock(Context& ctx, IRenderer& r, float rightX, float y, Color c
     st.size = 16;
     st.color = color.fade(0.6f);
     r.drawText(buf, rightX, y + 36, st);
+}
+
+inline void drawClock(Context& ctx, IRenderer& r, float rightX, float y, Color color) {
+    int h = 0, m = 0, d = 1, mo = 1, yr = 2026;
+    ctx.platform->localTime(h, m, d, mo, yr);
+    drawClockValues(r, rightX, y, color, h, m, d, mo, yr);
 }
 
 }  // namespace nx

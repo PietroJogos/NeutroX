@@ -128,7 +128,8 @@ bool Library::load(const std::string& path) {
         if (eq == std::string::npos) continue;
         const std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
         if (section == "[opcoes]") {
-            if (k == "busca_ao_iniciar") opts_.scanOnStart = parseBool(v);
+            if (k == "pastas_inicializadas") opts_.foldersInitialized = parseBool(v);
+            else if (k == "busca_ao_iniciar") opts_.scanOnStart = parseBool(v);
             else if (k == "profundidade_padrao") opts_.defaultDepth = std::max(1, std::min(12, toInt(v, 4)));
             else if (k == "tipo_xex") opts_.typeXex = parseBool(v);
             else if (k == "tipo_god") opts_.typeGod = parseBool(v);
@@ -175,6 +176,7 @@ bool Library::load(const std::string& path) {
         if (e.id.empty()) e.id = stableGameId(e.titleId, e.path);
     folders_.erase(std::remove_if(folders_.begin(), folders_.end(), [](const LibraryFolder& x) { return x.path.empty(); }),
                    folders_.end());
+    if (!folders_.empty()) opts_.foldersInitialized = true;
     recomputeDuplicates();
     dirty_ = false;
     ++version_;
@@ -187,6 +189,7 @@ bool Library::save(const std::string& path) {
     o << "# Neutro X - biblioteca de jogos (arquivo proprio do Neutro X).\n";
     o << "# Remover uma entrada aqui NAO apaga o jogo. Pode ser apagado para recomecar a biblioteca.\n";
     o << "versao=1\n\n[opcoes]\n";
+    o << "pastas_inicializadas=" << (opts_.foldersInitialized || !folders_.empty() ? 1 : 0) << "\n";
     o << "busca_ao_iniciar=" << (opts_.scanOnStart ? 1 : 0) << "\n";
     o << "profundidade_padrao=" << opts_.defaultDepth << "\n";
     o << "tipo_xex=" << (opts_.typeXex ? 1 : 0) << "\n";
@@ -240,6 +243,7 @@ bool Library::addFolder(const std::string& p, std::string* why) {
     f.path = path;
     f.maxDepth = opts_.defaultDepth;
     folders_.push_back(f);
+    opts_.foldersInitialized = true;
     markDirty();
     return true;
 }
@@ -415,7 +419,6 @@ std::vector<GameEntry> Library::scan(const std::vector<LibraryFolder>& folders, 
                 const std::string full = joinPath(dir, de.name);
                 const bool isXex = endsWithNoCase(lname, ".xex");
                 const bool noExt = lname.find('.') == std::string::npos;
-                if (isXex && lname == "default.xex") hasDefault = true;
                 const bool wantXex = isXex && (lname == "default.xex" ? opts.typeXex : opts.typeApps);
                 const bool wantPkg = noExt && de.size >= 0x971A && (opts.typeGod || opts.typeXbla);
                 if (!wantXex && !wantPkg) continue;
@@ -424,6 +427,7 @@ std::vector<GameEntry> Library::scan(const std::vector<LibraryFolder>& folders, 
                 GameEntry e;
                 std::string why;
                 if (probeFile(full, opts, e, &why)) {
+                    hasDefault = hasDefault || e.kind == GameKind::Xex;
                     e.folder = normalizePath(f.path);
                     out.push_back(std::move(e));
                     ++st.found;

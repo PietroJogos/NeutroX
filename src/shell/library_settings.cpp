@@ -162,10 +162,15 @@ public:
         add(Covers, 0, "Baixar capas automaticamente (XboxUnity)", yesNo(lib.options().autoCovers));
         add(Packages, 0, "Iniciar GOD/XBLA (experimental)", yesNo(lib.options().launchPackages));
         {
-            LaunchTarget a = ctx.app->exitTargetInfo(ExitTarget::Aurora);
+            const auto& configured = ctx.settings->auroraPath;
+            if (configured != auroraConfigured_ || ctx.time >= auroraRefreshAt_) {
+                aurora_ = ctx.app->exitTargetInfo(ExitTarget::Aurora);
+                auroraConfigured_ = configured;
+                auroraRefreshAt_ = ctx.time + 5.0;
+            }
             add(Aurora, 0, "Caminho do Aurora (Sair > Voltar ao Aurora)",
                 !ctx.settings->auroraPath.empty() ? localPathToConsole(ctx.settings->auroraPath, roots)
-                : a.found                         ? "automático: " + localPathToConsole(a.path, roots)
+                : aurora_.found                   ? "automático: " + localPathToConsole(aurora_.path, roots)
                                                   : "automático (não encontrado)");
         }
     }
@@ -267,6 +272,10 @@ public:
                 break;
         }
     }
+
+    LaunchTarget aurora_;
+    std::string auroraConfigured_;
+    double auroraRefreshAt_ = 0;
 
     void folderOptions(Context& ctx, int idx) {
         Library& lib = ctx.app->library();

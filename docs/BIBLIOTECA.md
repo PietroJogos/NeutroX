@@ -1,7 +1,10 @@
 # Meus Jogos: biblioteca de jogos reais
 
-Versão 0.9.0-beta. Na prévia do Windows, todas as funções abaixo foram testadas com títulos
-sintéticos (testes automatizados). **No console, nada foi testado ainda.**
+Na 0.9.1, o primeiro uso com busca ao iniciar e sem pastas configuradas procura
+`Games`, `Jogos`, `games e homebrews` e `Content/0000000000000000` nas unidades
+montadas. Só adiciona diretórios que existem. Se você usa outra pasta, selecione-a
+em Configurações → Jogos. **Procurar agora** também tenta detectar essas pastas
+quando a lista está vazia.
 
 ## O que aparece
 
@@ -82,7 +85,7 @@ http://xboxunity.net/Resources/Lib/Cover.php?size=large&cid=<CoverID>   -> JPEG 
   recusados com o motivo no log.
 - **GOD/XBLA sem rede:** a miniatura PNG do próprio pacote vira capa provisória.
 - **Atualizar capa** (detalhes) baixa de novo, ignorando o cache.
-- **PC → console:** `tools/xbox_install.py --covers <pasta>` envia capas já baixadas.
+- **PC → console:** `tools/xbox_install.py --covers <pasta>` envia as imagens para `capas_importar/`. Depois use **Importar capas**.
 
 Decodificadores próprios, sem bibliotecas externas: PNG de 8 bits (inflate próprio) e JPEG
 baseline. JPEG progressivo é recusado com o motivo. Ambos foram conferidos contra o Pillow

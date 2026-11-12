@@ -33,14 +33,21 @@ std::string jsonField(const std::string& obj, const std::string& key) {
 
 std::string pickCoverId(const std::string& json, int* count) {
     // Percorre os objetos {...} do vetor "Covers".
-    size_t p = json.find("\"Covers\"");
-    if (count) *count = 0;
+    if (count) *count = -1;
+    const size_t key = json.find("\"Covers\"");
+    if (key == std::string::npos) return "";
+    size_t p = json.find(':', key + 8);
     if (p == std::string::npos) return "";
+    p = json.find_first_not_of(" \t\r\n", p + 1);
+    if (p == std::string::npos || json[p] != '[') return "";
+    const size_t end = json.find(']', p + 1);
+    if (end == std::string::npos) return "";
+    if (count) *count = 0;
     std::string best;
     int bestScore = -1;
-    while ((p = json.find('{', p)) != std::string::npos) {
+    while ((p = json.find('{', p)) < end) {
         size_t e = json.find('}', p);
-        if (e == std::string::npos) break;
+        if (e >= end) { if (count) *count = -1; return ""; }
         const std::string obj = json.substr(p, e - p + 1);
         const std::string id = jsonField(obj, "CoverID");
         bool digits = !id.empty() && id.size() < 10;
@@ -189,7 +196,8 @@ CoverResult CoverService::fetch(const Job& j) {
     int count = 0;
     const std::string cid = pickCoverId(std::string(info.body.begin(), info.body.end()), &count);
     if (cid.empty()) {
-        r.message = "nenhuma capa para o Title ID " + tid + " no XboxUnity";
+        r.message = count < 0 ? "resposta de catálogo inválida para o Title ID " + tid
+                             : "nenhuma capa para o Title ID " + tid + " no XboxUnity; importe " + tid + ".jpg ou .png";
         return r;
     }
     HttpResponse img;

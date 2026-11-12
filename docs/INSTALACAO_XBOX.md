@@ -1,9 +1,7 @@
 # Instalar e testar o Neutro X no Xbox 360 (RGH/JTAG, pelo Aurora)
 
-> **Situação (0.9.0-beta): não testado em hardware.** A 0.9.0 corrige o que foi relatado no
-> primeiro uso no console (reinício ao sair, travadas, falta de som) e traz a biblioteca de
-> jogos reais. Nada disso foi verificado no Xbox 360 ainda; a Fase 10 só fecha com o seu
-> teste.
+> O log da 0.9.0 confirma execução no Xbox 360. A 0.9.1 tem compilação XEX
+> concluída e aguarda o teste físico descrito abaixo.
 
 ## O que o aplicativo faz (e o que não faz) no console
 
@@ -21,30 +19,35 @@
   | `NeutroX.log` | registro de execução |
   | `local_audio/` | sons originais, opcional, sempre local (não redistribua) |
 
-## Instalação (recomendado: ferramenta do PC)
+## Instalação da 0.9.1
 
-1. No Aurora, anote o IP do console e o usuário/senha do FTP.
-2. No PC, na pasta do projeto ou do pacote, rode:
+Abra o ZIP **LOCAL** no PC e copie `NeutroX.xex` e a pasta `local_audio` completa para
+a mesma pasta de onde o Aurora já abre o aplicativo. No log recebido, a instalação estava
+em `Usb0:\games e homebrews\neutrox\`. Preserve `neutrox.ini`, `biblioteca.ini`
+e as capas existentes. Abra o XEX atualizado no Aurora.
 
-   ```bash
-   python tools/xbox_install.py --host <IP-do-console> --xex NeutroX.xex
-   ```
+O ZIP local inclui 52 WAVs originais verificados do Metro V2 e os arquivos de diagnóstico
+das cinco versões. A expectativa é 7/8 efeitos originais no Metro V2 e 0/8 nos outros
+quatro dashboards. O ZIP com áudio é para uso local. A edição redistribuível traz o
+aplicativo e o instalador para importar a partir dos seus arquivos locais.
 
-   A ferramenta pede a senha (não a guarda), cria `Hdd1:\Apps\NeutroX\` e envia o `.xex` e
-   a pasta `local_audio/` gerada por `tools/sound_extract.py`. Use `--dry-run` para só ver
-   a lista e `--dest /Hdd1/OutraPasta` para mudar o destino. Ela nunca apaga nada no console.
-3. No Aurora, abra o `NeutroX.xex` pelo gerenciador de arquivos (ou inclua `Hdd1:\Apps` nas
-   pastas de busca de conteúdo).
+Para instalar por FTP a partir do ZIP local extraído, use o instalador incluído em
+`ferramentas/`. Ajuste a pasta se o Aurora abre o XEX de outro local.
 
-Manual, sem a ferramenta: copie o `NeutroX.xex` (e, se quiser, a pasta
-`%LOCALAPPDATA%\NeutroX\local_audio\` inteira) para `Hdd1:\Apps\NeutroX\` com um cliente FTP.
+```powershell
+python ferramentas/xbox_install.py --host <IP-do-console> --dest "/Usb0/games e homebrews/neutrox"
+```
 
-## Teste da 0.9.0: o que verificar e me enviar
+Use `--dry-run` para conferir as cinco contagens e o destino. Use `--no-audio`
+quando quiser enviar apenas o aplicativo. Para montar a pasta de instalação com
+outro acervo, use `--prepare-local <pasta>` junto de `--xex` e `--local-audio`.
+
+## Teste físico da 0.9.1
 
 Use por alguns minutos e saia por **Sair → Voltar ao Aurora**. Depois baixe o log:
 
 ```bash
-curl.exe ftp://<console>/Hdd1/Apps/NeutroX/NeutroX.log --user <usuario>:<senha> -o NeutroX.log
+curl.exe "ftp://<console>/Usb0/games%20e%20homebrews/neutrox/neutrox.log" --user <usuario> -o neutrox.log
 ```
 
 | # | Verificação | O que observar |
@@ -57,8 +60,8 @@ curl.exe ftp://<console>/Hdd1/Apps/NeutroX/NeutroX.log --user <usuario>:<senha> 
 | 6 | **Som** | Configurações → Sons originais: estado → **X (Testar saída)**: o tom do Neutro X deve tocar. Depois, no Metro V2 (com `local_audio`), navegar deve tocar os originais. Anote o que a linha "Saída" mostra |
 | 7 | **Sair → Voltar ao Aurora** | Volta ao Aurora **sem reiniciar o console** |
 | 8 | **Sair → Voltar ao Xbox Dashboard** | Abre o dashboard oficial (ou o Aurora, se o DashLaunch redirecionar) sem reiniciar |
-| 9 | **Meus Jogos** | Configurações → Jogos: gerenciar pastas → adicionar `Hdd1:\Games` (ou a sua pasta). Os jogos aparecem com nome, Title ID e caminho; sem jogos falsos |
-| 10 | Capas | Com internet, as capas aparecem sozinhas em alguns segundos; sem rede, ficam as já salvas |
+| 9 | **Meus Jogos** | Confira quais pastas foram detectadas em Configurações → Jogos. Para um diretório personalizado, adicione a pasta e use Procurar agora. Confira nome, Title ID e caminho em Detalhes |
+| 10 | Capas | Confira o Title ID em Detalhes. Para `05AB81F0`, importe uma imagem própria com esse nome em `capas_importar/` |
 | 11 | Perfil | O nome do seu perfil aparece nas interfaces; trocar de perfil pelo Guia atualiza o nome |
 | 12 | **Jogar** (um jogo extraído) | Detalhes → Jogar → Sim: o jogo inicia sem reiniciar o console |
 | 13 | Persistência | Favorite um jogo, saia e abra de novo: favorito e pastas continuam |

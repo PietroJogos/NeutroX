@@ -49,6 +49,7 @@ struct LibraryFolder {
 };
 
 struct LibraryOptions {
+    bool foldersInitialized = false;  // inclui migracao de bibliotecas sem pastas
     bool scanOnStart = true;
     int defaultDepth = 4;
     bool typeXex = true, typeGod = true, typeXbla = true, typeApps = false;
