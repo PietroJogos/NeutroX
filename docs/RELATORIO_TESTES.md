@@ -1,9 +1,36 @@
-# Relatório de testes — 0.8.0-beta
+# Relatório de testes — 0.9.0-beta
 
-Executado em 11/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
+Executado em 12/11/2026 · Windows 11 · MSVC 2022 (Release, x64) · plataforma *headless*.
 Comando: `build/Release/neutrox_tests.exe build/test_output`
 
-**Resultado: 977 verificações aprovadas, 0 falharam**; com o teste opcional da pasta real (`NEUTROX_DADOS_REAIS`), **993 aprovadas, 0 falharam**.
+**Resultado: 1146 verificações aprovadas, 0 falharam**; com o teste opcional da pasta real
+(`NEUTROX_DADOS_REAIS`), **1162 aprovadas, 0 falharam**. As verificações das Fases 1–9 (946
+na Fase 9, 977 na 0.8.0) continuam todas no conjunto. As que dependiam dos 8 jogos fictícios
+agora usam uma biblioteca **de teste** com 8 títulos sintéticos (cabeçalhos XEX2 gerados na
+pasta do teste), que nunca aparece no aplicativo.
+
+## Novidades da 0.9.0
+
+| # | Prioridade do pedido | Como foi verificado | Resultado |
+|---|---|---|---|
+| 1 | Sair para o Aurora | `launch.ini` simulado (lido sem alterar; bytes conferidos antes/depois), local padrão, caminho configurado com prioridade, caminhos `Hdd:`/`Hdd1:`/`Usb:`; no diálogo, "Voltar ao Aurora" encerra e deixa o `.xex` do Aurora para iniciar | ✅ (PC) |
+| 2 | Sair para o Xbox Dashboard | `dash.xex` ausente: opção desabilitada com o motivo, nada encerra; presente: troca para ele | ✅ (PC) |
+| — | Cancelar / B | Volta ao menu; nada encerra | ✅ |
+| 3 | Primeiro → último → primeiro | Os 3 eixos das 5 interfaces, indo além do fim e dando a volta: pior lógica 0,11 ms; p95 da volta no mesmo patamar da ida | ✅ (PC) |
+| 4 | Trocar de dashboard repetidamente | 100 trocas (teste existente) + soak de 6.000 ações, agora incluindo Meus Jogos, detalhes, navegador e teclado | ✅ |
+| 5 | Abrir e fechar menus | START, diálogo de saída, opções, teclado, navegador | ✅ |
+| 6 | Adicionar pasta | Pelo navegador: unidade → pasta → "usar esta pasta" → busca em segundo plano → 2 jogos | ✅ |
+| 7 | Reconhecer jogo real | XEX2 válido aceito; DLL, patch, sem marca de título, sem Execution ID, lixo e cabeçalho truncado recusados; STFS GOD/XBLA aceitos; save/perfil ignorados; multi-disco; o próprio Neutro X ignorado | ✅ |
+| 8 | Evitar duplicatas | Mesma Media ID em HDD e USB: 2 entradas, 1 visível; detalhes contam a cópia | ✅ |
+| 9 | Baixar capa válida | Servidor HTTP **local** de teste com o formato do XboxUnity (JSON + JPEG servido como `image/png`): escolhe a oficial, valida, grava sem `.part`/`.tmp` sobrando; em cache não baixa de novo | ✅ |
+| 10 | Sem internet | Porta fechada: falha com motivo, capa salva continua; HTTPS recusado com motivo | ✅ |
+| 11 | Trocar de perfil | Perfil simulado: nome nas interfaces, troca detectada em ≤ 2 s, "Nenhum perfil conectado" | ✅ (PC) |
+| 12 | Recuperação após falhas | Jogo apagado por fora: não inicia (motivo), fica "indisponível"; `biblioteca.ini` corrompido carrega vazio sem travar; filtro sem resultado (falha real encontrada no soak e corrigida) | ✅ |
+| 13 | Iniciar jogo | Prévia: recusa com motivo, nada encerra; plataforma que inicia títulos: revalida o cabeçalho e encerra para iniciar o `default.xex`; GOD/XBLA recusado com o experimental desligado | ✅ (PC) — **console não testado** |
+| — | Renderizador paralelo | 3 resoluções × 5 cenas e 81 quadros do aplicativo inteiro (animações, cache, menus) com 1 e 6 threads: **idênticos pixel a pixel** | ✅ |
+| — | Decodificadores | PNG com deflate dinâmico e alfa; JPEG 4:2:0; recorte da frente da capa; HTML recusado; JPEG truncado não trava. Conferidos contra o Pillow nas capas reais: diferença média < 2/255 | ✅ |
+| — | Biblioteca persistente | Ida e volta do `biblioteca.ini`; sem mudanças **não grava de novo**; favoritos e datas preservados entre buscas; remover não apaga o arquivo e não volta na busca seguinte; remover pasta monitorada | ✅ |
+| — | Pasta real do usuário | O teste opcional não cria nem altera biblioteca na pasta real (conferido) | ✅ |
 
 | # | Teste obrigatório | Como foi verificado | Resultado |
 |---|---|---|---|
@@ -31,6 +58,12 @@ Comando: `build/Release/neutrox_tests.exe build/test_output`
 | — | **Blades (Fase 4)** | 4 lâminas, limites, animação de troca, 6 subpainéis por lâmina abrem/fecham, rolagem até o último jogo, opções (fundo grafite recria a textura sem vazar), atalhos para Configurações/Sobre, nenhum erro registrado | ✅ |
 
 ## Desempenho (CPU, renderizador em software, PC de desenvolvimento)
+
+**0.9.0** (1 thread; no console são 6), mediana ao vivo em 720p: Blades 3,55 ms (era 9,82),
+NXE troca de canal 3,59 ms (era 11,69), Kinect 2,08 ms (era 5,98), Metro V1 1,08 ms, Metro V2
+1,95 ms, menu principal 2,95 ms (era 8,31). Em 1080p, NXE troca de canal 6,28 ms (era 24,45).
+Com 4 threads no PC, a troca de canal do NXE cai mais 2,8–3,8×. Detalhes em
+[DESEMPENHO.md](DESEMPENHO.md). As tabelas abaixo são as da 0.8.0, para comparação.
 
 Média por quadro logo após abrir cada tela (inclui a animação de entrada):
 
@@ -109,7 +142,14 @@ Os valores variam entre execuções (a máquina estava com outros programas aber
 | Teste opcional com a pasta real (`NEUTROX_DADOS_REAIS`) | Metro V2: 7 de 8 efeitos carregados, 52 arquivos, 17 não confirmados, 0 erros; demais versões 0 ("sem acesso: XEX criptografado"); cada interface deixa residente só o próprio conjunto ✅ |
 | Texto da interface | `glyph_check.py` agora também decodifica escapes `\x..`; encontrou e corrigiu "…" ✅ |
 
-## Compilação para o Xbox 360 (Fase 10)
+## Compilação para o Xbox 360 (0.9.0)
+
+`NeutroX.xex` 0.9.0 compilado sem avisos de compilação (≈2,9 MB). Cabeçalho: XEX2, título
+`0x4E455558`, versão 0.9.0.0, sem criptografia, importa só `xam.xex` e `xboxkrnl.exe`. As
+linhas `xenia_scan` do build são avisos informativos da ferramenta do xsdk sobre o Xenia, não
+sobre o console.
+
+## Compilação para o Xbox 360 (Fase 10, 0.8.0)
 
 | Verificação | Resultado |
 |---|---|

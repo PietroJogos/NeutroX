@@ -11,11 +11,19 @@ de dashboards do Xbox 360, navegáveis pelo controle e trocáveis sem reiniciar:
 | Metro V1 | 2.0.15574.0 | 2012 |
 | Metro V2 | 2.0.17559.0 | 2019 |
 
-> **Status: beta 0.8.0 (Fases 1–9 concluídas; Fase 10: `NeutroX.xex` gerado, aguardando teste no console).**
-> Roda como **prévia no Windows**; o `.xex` para o Xbox 360 é compilado pela cadeia do xsdk
-> ([docs/TOOLCHAIN.md](docs/TOOLCHAIN.md)) e **ainda não foi testado em hardware** —
-> instalação e roteiro de teste em [docs/INSTALACAO_XBOX.md](docs/INSTALACAO_XBOX.md). As **cinco interfaces estão completas** e integradas
-> (opções salvas, memória otimizada, teste de resistência).
+> **Status: beta 0.9.0 (Fases 1–9 concluídas; Fase 10 em andamento).** A 0.9.0 corrige o que
+> apareceu no primeiro uso no console (reinício ao sair, travadas, falta de som) e traz
+> **Meus Jogos**, uma biblioteca de jogos reais com capas. Roda como **prévia no Windows**;
+> o `.xex` do Xbox 360 é compilado pela cadeia do xsdk e **as correções ainda não foram
+> testadas em hardware**. Roteiro de teste: [docs/INSTALACAO_XBOX.md](docs/INSTALACAO_XBOX.md).
+
+| Novidade 0.9.0 | Documento |
+|---|---|
+| Sair: **Voltar ao Aurora / Voltar ao Xbox Dashboard / Cancelar**, por troca de aplicativo (sem reiniciar o console) | [docs/SAIDA_E_INICIALIZACAO.md](docs/SAIDA_E_INICIALIZACAO.md) |
+| Renderização 3–9× mais rápida nas primitivas pesadas + rasterização em 6 threads no console; medição de quadros lentos | [docs/DESEMPENHO.md](docs/DESEMPENHO.md) |
+| Diagnóstico de som (saída, mixer, efeitos mudos), teste de saída, instalador por FTP dos sons locais | [docs/SONS.md](docs/SONS.md) |
+| **Meus Jogos:** busca nas pastas (default.xex, GOD, XBLA), favoritos, pesquisa, detalhes, Jogar, capas do XboxUnity, aparência por interface | [docs/BIBLIOTECA.md](docs/BIBLIOTECA.md) |
+| Nome do perfil conectado (somente leitura) nas interfaces | [docs/LIMITACOES.md](docs/LIMITACOES.md) |
 
 ![Menu principal](docs/img/menu_principal.png)
 
@@ -91,14 +99,18 @@ src/graphics/    IRenderer, renderizador em software, fonte vetorial própria, �
 src/input/       abstração do controle (repetição, analógico, desconexão)
 src/audio/       mixer, temas sonoros por versão, carregador de sons originais (WAV)
 src/settings/    configurações (arquivo próprio neutrox.ini, gravação atômica)
+src/library/     Meus Jogos: cabeçalhos XEX2/STFS, busca, biblioteca.ini, capas (XboxUnity)
+src/net/         cliente HTTP mínimo (capas)
+src/system/      saída para o Aurora/dashboard (launch.ini só leitura)
 src/dashboards/  registro e telas das cinco interfaces
-src/shell/       menu inicial, configurações, sobre, menu START, diálogos, erro
-src/platform/    win32 (prévia), headless (testes), xbox360 (porta futura)
+src/shell/       menu inicial, configurações, Meus Jogos, pastas, teclado, menu START, diálogos
+src/platform/    win32 (prévia), headless (testes), xbox360 (xsdk)
 assets/          sons recriados exportados em WAV, por versão
 tools/           xex_inspect.py (cabeçalho), xex_unpack.cpp + sound_extract.py (extração local de
-                 sons originais), glyph_check.py (texto x fonte), exportador de sons recriados
+                 sons originais), xbox_install.py (envio por FTP ao console), glyph_check.py,
+                 exportador de sons recriados
 docs/            relatórios, arquitetura, toolchain, limitações, fases
-tests/           testes automatizados
+tests/           testes automatizados (fixtures/: imagens sintéticas de teste)
 ```
 
 ## Documentação
@@ -107,6 +119,9 @@ tests/           testes automatizados
 - [Arquitetura](docs/ARQUITETURA.md)
 - [Ferramentas de compilação e porta para o console](docs/TOOLCHAIN.md)
 - [Instalar e testar no Xbox 360 (Aurora)](docs/INSTALACAO_XBOX.md)
+- [Saída e início de jogos](docs/SAIDA_E_INICIALIZACAO.md)
+- [Meus Jogos (biblioteca e capas)](docs/BIBLIOTECA.md)
+- [Desempenho](docs/DESEMPENHO.md)
 - [Sons](docs/SONS.md)
 - [Relatório de áudio dos cinco XEX](docs/RELATORIO_AUDIO_XEX.md)
 - [Relatório de testes](docs/RELATORIO_TESTES.md)

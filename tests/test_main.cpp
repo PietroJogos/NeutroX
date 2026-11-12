@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <new>
 #include <string>
@@ -23,7 +24,16 @@
 #include "core/app.h"
 #include "core/log.h"
 #include "core/png_writer.h"
+#include "core/fsutil.h"
 #include "graphics/font.h"
+#include "system/launcher.h"
+#include "library/title_meta.h"
+#include "library/covers.h"
+#include "library/library.h"
+#include "graphics/image_decode.h"
+#include "net/http.h"
+#include "dashboards/common/demo_content.h"
+#include <thread>
 #include "graphics/soft_renderer.h"
 #include "graphics/ui.h"
 #include "input/input.h"
@@ -72,10 +82,56 @@ static void section(const char* name) {
 static std::string g_out = "test_output/";
 
 // ------------------------------------------------------------ helpers
+
+// Cabecalho XEX2 minimo e valido (somente para TESTES): flags de titulo + Execution ID.
+static std::vector<uint8_t> makeTestXex(uint32_t titleId, uint32_t mediaId, uint32_t flags = 1, bool withExecId = true,
+                                        uint8_t disc = 1, uint8_t discs = 1) {
+    std::vector<uint8_t> d(0x80, 0);
+    auto be = [&d](size_t o, uint32_t v) { d[o] = uint8_t(v >> 24); d[o + 1] = uint8_t(v >> 16); d[o + 2] = uint8_t(v >> 8); d[o + 3] = uint8_t(v); };
+    d[0] = 'X'; d[1] = 'E'; d[2] = 'X'; d[3] = '2';
+    be(4, flags);
+    be(8, 0x80);    // inicio dos dados PE (= fim do cabecalho)
+    be(0x10, 0x60); // informacoes de seguranca (nao usadas pela biblioteca)
+    be(0x14, withExecId ? 1 : 0);
+    if (withExecId) {
+        be(0x18, 0x00040006);
+        be(0x1C, 0x30);
+        be(0x30, mediaId);
+        be(0x34, 0x00010000);  // versao
+        be(0x3C, titleId);
+        d[0x42] = disc;
+        d[0x43] = discs;
+    }
+    return d;
+}
+
+// Biblioteca de TESTE: 8 titulos sinteticos numa pasta do proprio teste (nunca no produto).
+static const char* const kTestGames[] = {"Corrida Neutra", "Planeta Azul", "Torre de Blocos", "Ecos do Abismo",
+                                         "Pixel Fazenda", "Orbita Zero", "Lamina de Vento", "Cidade Aberta"};
+static void seedTestLibrary(const std::string& dataDir) {
+    const std::string games = dataDir + "jogos_teste/";
+    std::string ini = "versao=1\n[opcoes]\nbusca_ao_iniciar=0\ncapas_automaticas=0\n[pasta]\ncaminho=" + normalizePath(games) +
+                      "\nprofundidade=3\nativa=1\n";
+    for (int i = 0; i < 8; ++i) {
+        const std::string dir = games + kTestGames[i] + "/";
+        makeDirs(dir);
+        const uint32_t tid = 0x4E580100u + uint32_t(i);
+        std::vector<uint8_t> x = makeTestXex(tid, 0x1000u + uint32_t(i));
+        writeFileAtomic(dir + "default.xex", x.data(), x.size());
+        ini += "[jogo]\nnome=" + std::string(kTestGames[i]) + "\ntitle_id=" + hex8(tid) + "\nmedia_id=" + hex8(0x1000u + uint32_t(i)) +
+               "\ntipo=" + (i == 2 || i == 4 || i == 5 ? "2" : "0") + "\ncaminho=" + normalizePath(dir + "default.xex") +
+               "\npasta=" + normalizePath(games) + "\nadicionado=" + std::to_string(1700000000 + i) + "\ndisponivel=1\n";
+    }
+    writeFileAtomic(dataDir + "biblioteca.ini", ini);
+}
+
 struct Harness {
     HeadlessPlatform plat;
     App app;
-    explicit Harness(const std::string& dataDir, int w = 1280, int h = 720) : plat(w, h, dataDir), app(plat) {}
+    explicit Harness(const std::string& dataDir, int w = 1280, int h = 720, bool seedLibrary = true)
+        : plat(w, h, dataDir), app(plat) {
+        if (seedLibrary) seedTestLibrary(dataDir);
+    }
     void step(uint32_t buttons = 0, int frames = 1, float dt = 1.0f / 60.0f) {
         for (int i = 0; i < frames; ++i) {
             RawPadState s;
@@ -101,6 +157,15 @@ struct Harness {
         writePng(g_out + name + ".png", r.pixelWidth(), r.pixelHeight(), r.pixels());
     }
 };
+
+// Pasta de teste vazia (apaga a de uma execucao anterior; so dentro de test_output/).
+static std::string freshDir(const char* name) {
+    std::string d = g_out + name + "/";
+    std::error_code ec;
+    std::filesystem::remove_all(std::filesystem::u8path(d), ec);
+    std::filesystem::create_directories(std::filesystem::u8path(d), ec);
+    return d;
+}
 
 static std::string tempDir(const char* name) {
     std::string d = g_out + name + "/";
@@ -436,7 +501,7 @@ static void testOriginalSounds() {
     }
 
     section("Troca automatica do tema sonoro com o dashboard");
-    Harness h(tempDir("theme"));
+    Harness h(freshDir("theme"));  // sem sobras de versoes antigas (ex.: sons_originais/)
     h.app.init();
     h.idle(3.0f);
     h.waitIdle();
@@ -460,7 +525,7 @@ static void testOriginalSounds() {
     h.waitIdle();
     h.app.openSettings();
     h.waitIdle();
-    for (int i = 0; i < 3; ++i) h.tap(Button::Down);
+    for (int i = 0; i < 4; ++i) h.tap(Button::Down);  // (linha "Jogos" entrou na posicao 1)
     h.tap(Button::A);  // "Sons originais: estado"
     h.waitIdle();
     h.idle(0.5f);
@@ -539,6 +604,7 @@ static void testAppFlow() {
     h.waitIdle();
     CHECK(std::string(h.app.topScreenName()) == "Settings");
     h.tap(Button::Right);  // dashboard padrao: Blades
+    h.tap(Button::Down);   // Jogos: gerenciar pastas
     h.tap(Button::Down);
     h.tap(Button::Left);   // volume 70
     for (int i = 0; i < 5; ++i) h.tap(Button::Down);  // sons, estado, animacoes, intensidade, tema
@@ -562,19 +628,26 @@ static void testAppFlow() {
     h.shot("11_sobre");
     h.tap(Button::B);
     h.waitIdle();
-    h.tap(Button::B);  // sair -> dialogo
+    h.tap(Button::B);  // sair -> dialogo de saida (Aurora / Dashboard / Cancelar)
     h.idle(0.3f);
-    CHECK(std::string(h.app.topScreenName()) == "Dialog");
+    CHECK(std::string(h.app.topScreenName()) == "ChoiceDialog");
     h.shot("12_dialogo_sair");
-    h.tap(Button::A);  // padrao "Nao"
+    h.tap(Button::Up);  // ultima opcao: Cancelar
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(!h.app.quitRequested());
+    CHECK(std::string(h.app.topScreenName()) == "MainMenu");
+    h.tap(Button::B);
+    h.idle(0.3f);
+    h.tap(Button::B);  // B tambem cancela
     h.waitIdle();
     CHECK(!h.app.quitRequested());
     h.tap(Button::B);
     h.idle(0.3f);
-    h.tap(Button::Left);  // "Sim"
-    h.tap(Button::A);
+    h.tap(Button::A);  // "Voltar ao Aurora": na previa (sem lancador) apenas fecha
     h.waitIdle();
     CHECK(h.app.quitRequested());
+    CHECK(h.app.launchOnExit().empty());
     h.app.shutdown();
     CHECK(h.plat.renderer().textureCount() == 0);  // tudo liberado
 }
@@ -621,17 +694,29 @@ static void testBlades() {
     CHECK(has(h.app.topDebugState(), "blade=1"));
     h.idle(0.8f);
     h.shot("24_blades_jogos");
-    // Subpainel: Biblioteca de Jogos
+    // "Meus Jogos" abre a biblioteca real (com o estilo do Blades)
+    h.tap(Button::A);
+    h.waitIdle();
+    h.idle(0.5f);
+    CHECK(std::string(h.app.topScreenName()) == "Library");
+    CHECK(h.app.libraryStyle() == DashboardId::Blades);
+    h.shot("25_blades_meus_jogos");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Blades");
+    // Subpainel: Jogos Arcade (titulos XBLA da biblioteca de teste: 3)
+    h.tap(Button::Down);
     h.tap(Button::A);
     h.idle(0.5f);
     CHECK(has(h.app.topDebugState(), "detail=1 detailSel=0"));
-    for (int i = 0; i < 7; ++i) h.tap(Button::Down);  // rola ate o ultimo jogo
+    for (int i = 0; i < 5; ++i) h.tap(Button::Down);
     h.idle(0.5f);
-    CHECK(has(h.app.topDebugState(), "detailSel=7"));
-    h.shot("25_blades_biblioteca");
-    h.tap(Button::Down);  // limite
-    CHECK(has(h.app.topDebugState(), "detailSel=7"));
-    h.tap(Button::A);  // item informativo (toast), continua no subpainel
+    CHECK(has(h.app.topDebugState(), "detailSel=2"));  // limite: 3 jogos arcade
+    h.tap(Button::A);  // jogo da biblioteca: abre os detalhes reais
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.tap(Button::B);
+    h.waitIdle();
     CHECK(has(h.app.topDebugState(), "detail=1"));
     h.tap(Button::B);
     h.idle(0.4f);
@@ -733,7 +818,11 @@ static void testNxe() {
     h.tap(Button::A);
     h.idle(0.6f);
     CHECK(has(h.app.topDebugState(), "panel=1 panelSel=0"));
-    h.tap(Button::A);  // "Jogar": demonstracao, nao executa
+    h.tap(Button::A);  // "Jogar": abre os detalhes reais do jogo (com o botao Jogar)
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.tap(Button::B);
+    h.waitIdle();
     CHECK(has(h.app.topDebugState(), "panel=1"));
     h.tap(Button::Down);
     h.idle(0.4f);
@@ -864,13 +953,17 @@ static void testKinect() {
     h.tap(Button::A);
     h.idle(0.6f);
     CHECK(has(h.app.topDebugState(), "detail=1 detailSel=0"));
-    h.tap(Button::A);  // "Jogar": demonstracao
+    h.tap(Button::A);  // "Jogar": abre os detalhes reais do jogo
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.tap(Button::B);
+    h.waitIdle();
     CHECK(has(h.app.topDebugState(), "detail=1"));
     h.tap(Button::Down);
     h.idle(0.4f);
     h.shot("43_kinect_pagina_jogo");
     for (int i = 0; i < 4; ++i) h.tap(Button::Down);
-    CHECK(has(h.app.topDebugState(), "detailSel=3"));  // ultimo botao: Voltar
+    CHECK(has(h.app.topDebugState(), "detailSel=2"));  // ultimo botao: Voltar (Jogar, Detalhes, Voltar)
     h.tap(Button::A);
     h.idle(0.5f);
     CHECK(has(h.app.topDebugState(), "detail=0"));
@@ -1046,9 +1139,13 @@ static void testMetroV1() {
     h.shot("55_metro1_jogos");
     h.tap(Button::A);
     h.idle(0.5f);
-    h.tap(Button::A);  // jogar: demonstracao
-    CHECK(has(h.app.topDebugState(), "detail=1"));
     h.shot("56_metro1_pagina_jogo");
+    h.tap(Button::A);  // jogar: abre os detalhes reais do jogo
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(has(h.app.topDebugState(), "detail=1"));
     h.tap(Button::B);
     h.idle(0.4f);
     // Opcoes: fundo e cor dos blocos
@@ -1144,25 +1241,29 @@ static void testMetroV2() {
     h.tap(Button::A);
     h.idle(0.5f);
     CHECK(has(h.app.topDebugState(), "library=1") && has(h.app.topDebugState(), "detail=1"));
-    h.tap(Button::A);  // jogar: demonstracao
-    CHECK(has(h.app.topDebugState(), "detail=1"));
     h.shot("64_metro2_info_jogo");
+    h.tap(Button::A);  // jogar: abre os detalhes reais do jogo
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(has(h.app.topDebugState(), "detail=1"));
     h.tap(Button::B);
     h.idle(0.4f);
     CHECK(has(h.app.topDebugState(), "library=1") && has(h.app.topDebugState(), "detail=0"));
-    // Filtros por categoria
+    // Filtros pelo tipo real do titulo (biblioteca de teste: 5 jogos extraidos + 3 XBLA)
     h.tap(Button::RB);
-    CHECK(has(h.app.topDebugState(), "filter=1 libSel=0 libCount=2"));
-    for (int i = 0; i < 5; ++i) h.tap(Button::RB);
-    CHECK(has(h.app.topDebugState(), "filter=6 libSel=0 libCount=3"));
+    CHECK(has(h.app.topDebugState(), "filter=1 libSel=0 libCount=5"));
+    for (int i = 0; i < 2; ++i) h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "filter=3 libSel=0 libCount=3"));
     h.idle(0.5f);
     h.shot("65_metro2_filtro_arcade");
-    h.tap(Button::RB);
-    CHECK(has(h.app.topDebugState(), "filter=7 libSel=0 libCount=8"));
+    for (int i = 0; i < 2; ++i) h.tap(Button::RB);
+    CHECK(has(h.app.topDebugState(), "filter=5 libSel=0 libCount=8"));
     h.tap(Button::RB);  // limite
-    CHECK(has(h.app.topDebugState(), "filter=7"));
+    CHECK(has(h.app.topDebugState(), "filter=5"));
     h.tap(Button::LB);
-    CHECK(has(h.app.topDebugState(), "filter=6"));
+    CHECK(has(h.app.topDebugState(), "filter=4"));
     h.tap(Button::B);
     h.idle(0.5f);
     CHECK(has(h.app.topDebugState(), "library=0"));
@@ -1309,6 +1410,588 @@ static void testOptionPersistence() {
     }
 }
 
+static void testExitTargets() {
+    section("Saida controlada: Aurora, Xbox Dashboard e Cancelar (sem reinicializacao)");
+    // Caminhos no estilo do DashLaunch -> unidades do Neutro X
+    std::string base = freshDir("exit_targets");
+    std::string hdd = base + "hdd/", usb = base + "usb0/";
+    makeDirs(hdd);
+    makeDirs(usb);
+    std::vector<StorageRoot> roots = {{hdd, "Disco", "Hdd1"}, {usb, "USB", "Usb0"}};
+    CHECK(consolePathToLocal("Hdd:\\Aurora\\Aurora.xex", roots) == normalizePath(hdd + "Aurora/Aurora.xex"));
+    CHECK(consolePathToLocal("Hdd1:\\Apps\\A.xex", roots) == normalizePath(hdd + "Apps/A.xex"));
+    CHECK(consolePathToLocal("Usb:\\X\\default.xex", roots) == normalizePath(usb + "X/default.xex"));
+    CHECK(consolePathToLocal("Mu0:\\x.xex", roots).empty());
+    CHECK(localPathToConsole(hdd + "Games/Halo/default.xex", roots) == "Hdd1:\\Games\\Halo\\default.xex");
+    CHECK(iniValue("[Paths]\r\nDefault = Hdd:\\Aurora\\Aurora.xex ; comentario\r\n", "default") == "Hdd:\\Aurora\\Aurora.xex");
+
+    // Sem Aurora em lugar nenhum: motivo explicado, nada encerrado
+    LaunchTarget none = findAurora(roots, "");
+    CHECK(!none.found && !none.reason.empty());
+    // launch.ini (somente leitura) apontando para o Aurora numa pasta fora do comum
+    makeDirs(hdd + "Dash/Aur");
+    writeBytes(hdd + "Dash/Aur/Aurora.xex", {'X', 'E', 'X', '2'});
+    writeBytes(hdd + "launch.ini", std::vector<uint8_t>({'[', 'P', 'a', 't', 'h', 's', ']', '\n'}));
+    {
+        std::string ini = "[Paths]\nDefault = Hdd:\\Dash\\Aur\\Aurora.xex\n";
+        writeBytes(hdd + "launch.ini", std::vector<uint8_t>(ini.begin(), ini.end()));
+    }
+    std::vector<uint8_t> before;
+    readFileBytes(hdd + "launch.ini", before, 4096);
+    LaunchTarget viaIni = findAurora(roots, "");
+    CHECK(viaIni.found && viaIni.path == normalizePath(hdd + "Dash/Aur/Aurora.xex"));
+    CHECK(viaIni.source.find("launch.ini") != std::string::npos);
+    std::vector<uint8_t> after;
+    readFileBytes(hdd + "launch.ini", after, 4096);
+    CHECK(before == after);  // launch.ini nunca e alterado
+    // Local padrao no USB e caminho configurado tem prioridade
+    makeDirs(usb + "Aurora");
+    writeBytes(usb + "Aurora/Aurora.xex", {'X', 'E', 'X', '2'});
+    CHECK(findAurora(roots, usb + "Aurora/Aurora.xex").source == "caminho configurado");
+    LaunchTarget miss = findAurora(roots, usb + "nao/existe.xex");  // configurado sumiu: cai no launch.ini
+    CHECK(miss.found && miss.source.find("launch.ini") != std::string::npos);
+
+    // Fluxo no "console" (plataforma que inicia titulos)
+    Harness h(tempDir("exit_flow"));
+    h.plat.setRoots(roots);
+    h.plat.setLaunchable(true, base + "flash/dash.xex");  // dash.xex ausente
+    h.app.init();
+    h.idle(3.0f);
+    h.waitIdle();
+    LaunchTarget dash = h.app.exitTargetInfo(ExitTarget::Dashboard);
+    CHECK(!dash.found && dash.reason.find("dash.xex") != std::string::npos);
+    std::string why;
+    CHECK(!h.app.requestExitTo(ExitTarget::Dashboard, &why) && !why.empty());
+    CHECK(!h.app.quitRequested());  // destino indisponivel: continua rodando
+    // Dialogo: a opcao do Dashboard fica desabilitada com o motivo; Cancelar volta
+    h.tap(Button::B);
+    h.idle(0.3f);
+    CHECK(std::string(h.app.topScreenName()) == "ChoiceDialog");
+    h.tap(Button::Down);  // Xbox Dashboard (desabilitado)
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(!h.app.quitRequested());
+    CHECK(std::string(h.app.topScreenName()) == "ChoiceDialog");
+    h.tap(Button::Up);  // Voltar ao Aurora
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(h.app.quitRequested());
+    CHECK(h.app.launchOnExit() == normalizePath(hdd + "Dash/Aur/Aurora.xex"));
+    h.app.shutdown();
+    CHECK(h.plat.renderer().textureCount() == 0);
+
+    // Dashboard oficial presente
+    makeDirs(base + "flash");
+    writeBytes(base + "flash/dash.xex", {'X', 'E', 'X', '2'});
+    Harness h2(tempDir("exit_flow2"));
+    h2.plat.setRoots(roots);
+    h2.plat.setLaunchable(true, base + "flash/dash.xex");
+    h2.app.init();
+    h2.idle(3.0f);
+    h2.waitIdle();
+    CHECK(h2.app.requestExitTo(ExitTarget::Dashboard));
+    CHECK(h2.app.launchOnExit() == base + "flash/dash.xex");
+    h2.app.shutdown();
+}
+
+
+// ------------------------------------------------------------ biblioteca de jogos
+
+static std::vector<uint8_t> readFixture(const char* name) {
+    std::vector<uint8_t> b;
+    readFileBytes(std::string(NX_TEST_FIXTURES) + name, b, 1u << 20);
+    return b;
+}
+
+// Cabecalho STFS sintetico (somente TESTES).
+static std::vector<uint8_t> makeTestStfs(const char* magic, uint32_t contentType, uint32_t titleId, const std::string& name,
+                                         const std::vector<uint8_t>& thumb) {
+    std::vector<uint8_t> d(0x971A, 0);
+    std::memcpy(d.data(), magic, 4);
+    auto be = [&d](size_t o, uint32_t v) { d[o] = uint8_t(v >> 24); d[o + 1] = uint8_t(v >> 16); d[o + 2] = uint8_t(v >> 8); d[o + 3] = uint8_t(v); };
+    be(0x344, contentType);
+    be(0x354, 0xABCD0001u);
+    be(0x360, titleId);
+    for (size_t i = 0; i < name.size() && i < 0x7F; ++i) d[0x411 + i * 2 + 1] = uint8_t(name[i]);  // UTF-16BE (ASCII)
+    be(0x1712, uint32_t(thumb.size()));
+    std::copy(thumb.begin(), thumb.end(), d.begin() + 0x171A);
+    return d;
+}
+
+static void testTitleMetadata() {
+    section("Biblioteca: cabecalhos reais (XEX2 e STFS), sem aceitar qualquer .xex");
+    XexMeta m;
+    std::vector<uint8_t> ok = makeTestXex(0x4D5307E6, 0x12345678, 1, true, 1, 2);
+    CHECK(parseXexHeader(ok.data(), ok.size(), m) && m.titleId == 0x4D5307E6 && m.mediaId == 0x12345678);
+    CHECK(m.discNumber == 1 && m.discCount == 2);
+    std::vector<uint8_t> dll = makeTestXex(0x4D5307E6, 1, 0x08 | 0x01);
+    CHECK(!parseXexHeader(dll.data(), dll.size(), m) && m.error.find("DLL") != std::string::npos);
+    std::vector<uint8_t> patch = makeTestXex(0x4D5307E6, 1, 0x01 | 0x10);
+    CHECK(!parseXexHeader(patch.data(), patch.size(), m) && m.error.find("patch") != std::string::npos);
+    std::vector<uint8_t> noId = makeTestXex(0x4D5307E6, 1, 1, false);
+    CHECK(!parseXexHeader(noId.data(), noId.size(), m) && m.error.find("Execution ID") != std::string::npos);
+    std::vector<uint8_t> notTitle = makeTestXex(0x4D5307E6, 1, 0x80);
+    CHECK(!parseXexHeader(notTitle.data(), notTitle.size(), m));
+    std::vector<uint8_t> junk(64, 'A');
+    CHECK(!parseXexHeader(junk.data(), junk.size(), m));
+    std::vector<uint8_t> trunc(ok.begin(), ok.begin() + 0x20);
+    CHECK(!parseXexHeader(trunc.data(), trunc.size(), m));  // nunca le fora do buffer
+
+    std::vector<uint8_t> thumb = readFixture("miniatura_teste.png");
+    CHECK(thumb.size() > 50);
+    StfsMeta s;
+    std::vector<uint8_t> god = makeTestStfs("LIVE", kContentGamesOnDemand, 0x415607E6, "Jogo GOD de Teste", thumb);
+    CHECK(parseStfsHeader(god.data(), god.size(), s) && s.titleId == 0x415607E6 && s.contentType == kContentGamesOnDemand);
+    CHECK(s.displayName == "Jogo GOD de Teste" && s.thumbnail == thumb);
+    std::vector<uint8_t> shortHdr(god.begin(), god.begin() + 0x400);
+    CHECK(!parseStfsHeader(shortHdr.data(), shortHdr.size(), s));
+    CHECK(hex8(0x4D5307E6) == "4D5307E6");
+    uint32_t v = 0;
+    CHECK(parseHex8("4d5307e6", v) && v == 0x4D5307E6 && !parseHex8("XYZ", v));
+
+    section("Imagens: PNG (deflate) e JPEG baseline proprios");
+    Image img;
+    std::string why;
+    CHECK(decodePng(thumb.data(), thumb.size(), img, &why) && img.w == 64 && img.h == 64);
+    CHECK(img.px.size() == 64 * 64 && (img.px[size_t(10) * 64 + 20] & 0x00FF0000u) >> 16 == 80);  // R = x*4
+    CHECK((img.px[63] >> 24) == 100);  // alfa da coluna 63
+    std::vector<uint8_t> jpg = readFixture("capa_teste.jpg");
+    CHECK(decodeJpeg(jpg.data(), jpg.size(), img, &why) && img.w == 300 && img.h == 200);
+    auto near = [](uint32_t p, int r, int g, int b) {
+        return std::abs(int((p >> 16) & 255) - r) < 30 && std::abs(int((p >> 8) & 255) - g) < 30 && std::abs(int(p & 255) - b) < 30;
+    };
+    CHECK(near(img.px[size_t(100) * 300 + 50], 30, 60, 200));   // verso (azul)
+    CHECK(near(img.px[size_t(100) * 300 + 250], 220, 30, 30));  // frente (vermelho)
+    Image front = frontCover(img);
+    CHECK(front.h == 200 && front.w == 141 && near(front.px[size_t(100) * front.w + 70], 220, 30, 30));
+    Image fit = coverFit(front, CoverTextures::kW, CoverTextures::kH);
+    CHECK(fit.w == CoverTextures::kW && fit.h == CoverTextures::kH);
+    CHECK(validateCoverBytes(jpg, &why));
+    std::string html = "<html><body>erro</body></html>";
+    CHECK(!validateCoverBytes(std::vector<uint8_t>(html.begin(), html.end()), &why));
+    std::vector<uint8_t> broken = jpg;
+    broken.resize(broken.size() / 3);
+    CHECK(!decodeJpeg(broken.data(), broken.size(), img, &why) || img.w == 300);  // truncado: falha sem travar
+    std::string json = "{\"Covers\":[{\"CoverID\":\"4245\",\"Rating\":\"5\",\"Official\":\"0\"},{\"CoverID\":\"225\",\"Rating\":\"5\",\"Official\":\"1\"},"
+                       "{\"CoverID\":\"99\",\"Rating\":null,\"Official\":\"0\"}],\"CoversCount\":3}";
+    int count = 0;
+    CHECK(pickCoverId(json, &count) == "225" && count == 3);  // oficial primeiro
+    CHECK(pickCoverId("{\"Covers\":[]}", &count).empty() && count == 0);
+}
+
+static void testLibraryScan() {
+    section("Biblioteca: busca nas pastas, profundidade, ignorados, duplicatas, GOD/XBLA");
+    const std::string base = freshDir("lib_scan");
+    const std::string hdd = base + "hdd/", usb = base + "usb0/";
+    auto put = [](const std::string& path, const std::vector<uint8_t>& b) {
+        makeDirs(parentPath(path));
+        writeFileAtomic(path, b.data(), b.size());
+    };
+    put(hdd + "Games/Jogo A/default.xex", makeTestXex(0x41410001, 0x11));
+    put(hdd + "Games/Jogo A/media/extra.xex", makeTestXex(0x41410002, 0x12));  // dentro de um jogo: nao entra
+    put(hdd + "Games/Modulo DLL/default.xex", makeTestXex(0x41410003, 0x13, 0x09));
+    put(hdd + "Games/Duplo/Disc 1/default.xex", makeTestXex(0x41410004, 0x14, 1, true, 1, 2));
+    put(hdd + "Games/Duplo/Disc 2/default.xex", makeTestXex(0x41410004, 0x15, 1, true, 2, 2));
+    put(hdd + "Games/a/b/c/d/e/Fundo/default.xex", makeTestXex(0x41410005, 0x16));  // alem da profundidade
+    put(hdd + "Games/Cache/Jogo Ignorado/default.xex", makeTestXex(0x41410006, 0x17));
+    put(hdd + "Games/Aplicativo/Ferramenta.xex", makeTestXex(0x41410007, 0x18));
+    put(hdd + "Games/Proprio/default.xex", makeTestXex(0x4E455558, 0x19));  // o proprio Neutro X
+    std::vector<uint8_t> thumb = readFixture("miniatura_teste.png");
+    put(hdd + "Content/0000000000000000/415607E6/00007000/ABCDEF0123456789", makeTestStfs("LIVE", kContentGamesOnDemand, 0x415607E6, "GOD Teste", thumb));
+    makeDirs(hdd + "Content/0000000000000000/415607E6/00007000/ABCDEF0123456789.data");
+    put(hdd + "Content/0000000000000000/58410A01/000D0000/1122334455667788", makeTestStfs("LIVE", kContentArcadeTitle, 0x58410A01, "XBLA Teste", {}));
+    put(hdd + "Content/0000000000000000/FFFE07D1/00010000/SaveDeJogo", makeTestStfs("CON ", 0x00000001, 0xFFFE07D1, "Save", {}));
+    put(usb + "Games/Jogo A (copia)/default.xex", makeTestXex(0x41410001, 0x11));  // mesma Media ID: duplicata
+
+    Library lib;
+    std::string why;
+    CHECK(lib.addFolder(hdd + "Games", &why));
+    CHECK(lib.addFolder(hdd + "Content", &why));
+    CHECK(lib.addFolder(usb + "Games", &why));
+    CHECK(!lib.addFolder(hdd + "Games", &why) && why.find("já") != std::string::npos);
+    CHECK(!lib.addFolder(hdd + "NaoExiste", &why));
+    lib.folders()[0].maxDepth = 4;
+    lib.addIgnore("Cache");
+    ScanStats st;
+    std::vector<GameEntry> found = Library::scan(lib.folders(), lib.options(), st);
+    lib.merge(found, st, 1000);
+    auto byTitle = [&](uint32_t tid) -> const GameEntry* {
+        for (const GameEntry& g : lib.games())
+            if (g.titleId == tid) return &g;
+        return nullptr;
+    };
+    std::printf("  busca: %d pastas, %d candidatos, %d titulos, %d recusados\n", st.folders, st.candidates, st.found, st.rejected);
+    CHECK(byTitle(0x41410001) && byTitle(0x41410001)->name == "Jogo A" && byTitle(0x41410001)->kind == GameKind::Xex);
+    CHECK(!byTitle(0x41410002));  // nao percorre a pasta de um jogo
+    CHECK(!byTitle(0x41410003));  // DLL recusada
+    CHECK(!byTitle(0x41410005));  // alem da profundidade
+    CHECK(!byTitle(0x41410006));  // pasta ignorada
+    CHECK(!byTitle(0x41410007));  // aplicativos desligados por padrao
+    CHECK(!byTitle(0x4E455558));  // o proprio Neutro X
+    CHECK(!byTitle(0xFFFE07D1));  // pacote que nao e jogo (save)
+    int discs = 0;
+    for (const GameEntry& g : lib.games())
+        if (g.titleId == 0x41410004) { ++discs; CHECK(g.name.find("Duplo (disco") == 0); }
+    CHECK(discs == 2);
+    const GameEntry* god = byTitle(0x415607E6);
+    CHECK(god && god->kind == GameKind::God && god->name == "GOD Teste" && !god->thumb.empty());
+    const GameEntry* xbla = byTitle(0x58410A01);
+    CHECK(xbla && xbla->kind == GameKind::Xbla);
+    // Duplicata: duas entradas, uma oculta nas vistas
+    int copies = 0;
+    for (const GameEntry& g : lib.games()) copies += g.titleId == 0x41410001;
+    CHECK(copies == 2);
+    int visibleA = 0;
+    for (int i : lib.view(Library::Filter::All)) visibleA += lib.games()[size_t(i)].titleId == 0x41410001;
+    CHECK(visibleA == 1);
+    const size_t visible = lib.view(Library::Filter::All).size();
+    CHECK(visible == 5);  // Jogo A, Duplo x2, GOD, XBLA
+
+    section("Biblioteca: favoritos, remover sem apagar, indisponivel, nova busca preserva dados");
+    const std::string idA = byTitle(0x41410001)->id;
+    lib.toggleFavorite(idA);
+    CHECK(lib.view(Library::Filter::Favorites).size() == 1);
+    CHECK(lib.view(Library::Filter::Search, "god").size() == 1 && lib.view(Library::Filter::Search, "JOGO a").size() == 1);
+    // Rebusca: favorito e data de adicao preservados
+    found = Library::scan(lib.folders(), lib.options(), st);
+    lib.merge(found, st, 2000);
+    CHECK(lib.find(idA) && lib.find(idA)->favorite && lib.find(idA)->added == 1000);
+    // Remover: sai da biblioteca, arquivo continua, nao volta numa nova busca
+    const std::string xblaPath = xbla->path, xblaId = xbla->id;
+    CHECK(lib.remove(xblaId));
+    CHECK(fileExists(xblaPath));
+    found = Library::scan(lib.folders(), lib.options(), st);
+    lib.merge(found, st, 3000);
+    CHECK(!byTitle(0x58410A01));
+    // Jogo apagado por fora: fica marcado como indisponivel (nao some sozinho)
+    std::remove((hdd + "Games/Duplo/Disc 2/default.xex").c_str());
+    lib.refreshAvailability();
+    CHECK(lib.view(Library::Filter::Unavailable).size() == 1);
+    // Adicionar manualmente valida o arquivo
+    std::string id;
+    CHECK(lib.addManual(hdd + "Games/Aplicativo/Ferramenta.xex", &why, &id) && lib.find(id)->kind == GameKind::App);
+    CHECK(!lib.addManual(hdd + "Games/Modulo DLL/default.xex", &why) && why.find("DLL") != std::string::npos);
+    CHECK(!lib.addManual(hdd + "Games/Aplicativo/Ferramenta.xex", &why));  // ja esta
+
+    section("Biblioteca: gravacao segura e sem escritas repetidas");
+    const std::string ini = base + "biblioteca.ini";
+    CHECK(lib.dirty() && lib.save(ini) && !lib.dirty());
+    std::vector<uint8_t> first;
+    readFileBytes(ini, first, 1u << 20);
+    std::remove(ini.c_str());
+    CHECK(lib.save(ini) && !fileExists(ini));  // nada mudou: nao grava de novo
+    lib.markDirty();
+    CHECK(lib.save(ini));
+    Library again;
+    CHECK(again.load(ini));
+    CHECK(again.games().size() == lib.games().size() && again.folders().size() == 3 && again.options().ignore.size() == lib.options().ignore.size());
+    CHECK(again.find(idA) && again.find(idA)->favorite && again.find(id) && again.find(id)->manual);
+    CHECK(!fileExists(ini + ".tmp"));
+    // Remover a pasta monitorada tira as entradas dela (os arquivos ficam)
+    again.removeFolder(2);
+    int fromUsb = 0;
+    for (const GameEntry& g : again.games()) fromUsb += g.path.find("usb0") != std::string::npos;
+    CHECK(fromUsb == 0 && fileExists(usb + "Games/Jogo A (copia)/default.xex"));
+    // Arquivo corrompido: carrega o que for valido, sem travar
+    writeFileAtomic(base + "ruim.ini", std::string("[jogo]\ntitle_id=ZZZ\ncaminho=\n[pasta]\n\n\x01\x02 lixo"));
+    Library bad;
+    bad.load(base + "ruim.ini");
+    CHECK(bad.games().empty() && bad.folders().empty());
+}
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+using socklen_t = int;
+using TestSock = SOCKET;
+static void closeTestSock(TestSock s) { closesocket(s); }
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+using TestSock = int;
+static void closeTestSock(TestSock s) { close(s); }
+#endif
+
+// Servidor HTTP local minimo (somente para testes): responde CoverInfo.php e Cover.php.
+struct TestHttpServer {
+    TestSock s{};
+    int port = 0;
+    std::thread th;
+    std::atomic<bool> stop{false};
+    std::atomic<int> requests{0};
+    std::vector<uint8_t> cover;
+    bool start() {
+        HttpResponse dummy;
+        httpGet("http://127.0.0.1:1/", dummy);  // inicia o Winsock pelo cliente
+        s = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(0x7F000001);
+        a.sin_port = 0;
+        if (bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(s, 4) != 0) return false;
+        socklen_t len = sizeof a;
+        getsockname(s, reinterpret_cast<sockaddr*>(&a), &len);
+        port = ntohs(a.sin_port);
+        th = std::thread([this]() {
+            while (!stop) {
+                TestSock c = accept(s, nullptr, nullptr);
+                if (stop) { closeTestSock(c); break; }
+                char buf[2048];
+                int n = int(recv(c, buf, sizeof buf - 1, 0));
+                std::string req(buf, buf + (n > 0 ? n : 0));
+                ++requests;
+                std::string body, type = "text/html", status = "200 OK";
+                if (req.find("CoverInfo.php?titleid=4D5307E6") != std::string::npos)
+                    body = "{\"Covers\":[{\"CoverID\":\"7\",\"Rating\":\"4\",\"Official\":\"1\"}],\"CoversCount\":1}";
+                else if (req.find("CoverInfo.php") != std::string::npos)
+                    body = "{\"Covers\":[],\"CoversCount\":0}";
+                else if (req.find("Cover.php?size=large&cid=7") != std::string::npos) {
+                    body.assign(cover.begin(), cover.end());
+                    type = "image/png";  // como o servidor real: tipo errado, conteudo JPEG
+                } else { status = "404 Not Found"; body = "nao encontrado"; }
+                std::string head = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " +
+                                   std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
+                send(c, head.data(), int(head.size()), 0);
+                send(c, body.data(), int(body.size()), 0);
+                closeTestSock(c);
+            }
+        });
+        return true;
+    }
+    ~TestHttpServer() {
+        stop = true;
+        if (port) {
+            HttpResponse r;
+            httpGet("http://127.0.0.1:" + std::to_string(port) + "/fim", r);  // desbloqueia o accept
+        }
+        if (th.joinable()) th.join();
+        closeTestSock(s);
+    }
+};
+
+static void testCovers() {
+    section("Capas: download do XboxUnity (servidor local de teste), validacao, cache e modo offline");
+    TestHttpServer srv;
+    srv.cover = readFixture("capa_teste.jpg");
+    CHECK(srv.start());
+    const std::string base = freshDir("covers");
+    CoverService svc;
+    svc.setDirs(base + "capas/", base + "capas_importar/");
+    svc.setBaseUrl("http://127.0.0.1:" + std::to_string(srv.port));
+    auto waitResults = [&svc](int want) {
+        std::vector<CoverResult> all;
+        for (int i = 0; i < 400 && int(all.size()) < want; ++i) {
+            for (auto& r : svc.takeResults()) all.push_back(r);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return all;
+    };
+    svc.request("jogoA", 0x4D5307E6, false, true);
+    svc.request("jogoB", 0x11111111, false, false);  // sem capa no servidor
+    std::vector<CoverResult> rs = waitResults(2);
+    CHECK(rs.size() == 2);
+    for (const CoverResult& r : rs) {
+        if (r.gameId == "jogoA") CHECK(r.ok && r.file == "4D5307E6.jpg" && fileExists(base + "capas/4D5307E6.jpg"));
+        if (r.gameId == "jogoB") CHECK(!r.ok && r.message.find("nenhuma capa") != std::string::npos);
+    }
+    std::vector<uint8_t> saved;
+    readFileBytes(base + "capas/4D5307E6.jpg", saved, 1u << 20);
+    CHECK(saved == srv.cover);
+    CHECK(!fileExists(base + "capas/4D5307E6.jpg.part") && !fileExists(base + "capas/4D5307E6.jpg.tmp"));
+    // Em cache: nao baixa de novo
+    const int before = srv.requests.load();
+    svc.request("jogoA", 0x4D5307E6, false, false);
+    rs = waitResults(1);
+    CHECK(rs.size() == 1 && rs[0].ok && srv.requests.load() == before);
+    // Sem internet (porta fechada): falha com motivo, capa salva continua
+    CoverService offline;
+    offline.setDirs(base + "capas/", base + "capas_importar/");
+    offline.setBaseUrl("http://127.0.0.1:1");
+    offline.request("jogoA", 0x4D5307E6, true, true);
+    std::vector<CoverResult> off;
+    for (int i = 0; i < 600 && off.empty(); ++i) {
+        off = offline.takeResults();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(off.size() == 1 && !off[0].ok && !off[0].message.empty());
+    CHECK(fileExists(base + "capas/4D5307E6.jpg"));
+    std::printf("  offline: %s\n", off.empty() ? "?" : off[0].message.c_str());
+    HttpResponse https;
+    CHECK(!httpGet("https://xboxunity.net/", https) && https.error.find("HTTPS") != std::string::npos);
+    // Importacao manual
+    makeDirs(base + "capas_importar");
+    writeFileAtomic(base + "capas_importar/415607E6.jpg", srv.cover.data(), srv.cover.size());
+    writeFileAtomic(base + "capas_importar/nome_errado.jpg", srv.cover.data(), srv.cover.size());
+    writeFileAtomic(base + "capas_importar/58410A01.png", std::string("isto nao e uma imagem de verdade ............................................"));
+    std::vector<std::string> notes;
+    auto imported = svc.importFolder(&notes);
+    CHECK(imported.size() == 1 && imported[0].first == 0x415607E6 && notes.size() == 2);
+}
+
+static void testLibraryApp() {
+    section("Meus Jogos: tela, filtros, pesquisa, favoritos, detalhes, pastas e Jogar");
+    const std::string base = freshDir("lib_app");
+    makeDirs(base + "hdd/Games/Halo Teste");
+    std::vector<uint8_t> x = makeTestXex(0x4D5307E6, 0x99);
+    writeFileAtomic(base + "hdd/Games/Halo Teste/default.xex", x.data(), x.size());
+    makeDirs(base + "hdd/Games/Outro Jogo");
+    x = makeTestXex(0x41410042, 0x98);
+    writeFileAtomic(base + "hdd/Games/Outro Jogo/default.xex", x.data(), x.size());
+    Harness h(base + "dados/", 1280, 720, false);
+    h.plat.setRoots({{base + "hdd/", "Disco de teste", "Hdd1"}});
+    h.app.init();
+    h.app.library().options().autoCovers = false;  // testes nao acessam a internet
+    h.idle(3.0f);
+    h.waitIdle();
+    CHECK(h.app.library().games().empty());
+    // Menu principal -> Meus Jogos (vazio) -> A abre "Jogos e pastas"
+    for (int i = 0; i < 5; ++i) h.tap(Button::Down);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Library");
+    h.shot("80_meus_jogos_vazio");
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "LibrarySettings");
+    // "+ Adicionar pasta…" -> navegador: unidade -> Games -> X (usar esta pasta)
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "FolderBrowser");
+    h.tap(Button::A);  // entra na unidade
+    h.waitIdle();
+    h.shot("81_navegador_pastas");
+    h.tap(Button::Down);  // [ Usar esta pasta ] -> Games
+    h.tap(Button::A);     // entra em Games
+    h.tap(Button::X);     // usar esta pasta
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "LibrarySettings");
+    CHECK(h.app.library().folders().size() == 1);
+    for (int i = 0; i < 300 && (h.app.libraryScanning() || h.app.library().games().size() < 2); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        h.step(0, 1);
+    }
+    CHECK(h.app.library().games().size() == 2);
+    h.shot("82_jogos_e_pastas");
+    h.tap(Button::B);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Library");
+    h.idle(0.6f);
+    h.shot("83_meus_jogos_carrossel");
+    // Favoritar (X), filtro Favoritos (RB), voltar (LB)
+    h.tap(Button::X);
+    CHECK(h.app.library().view(Library::Filter::Favorites).size() == 1);
+    h.tap(Button::RB);
+    h.tap(Button::LB);
+    // Pesquisa: Y -> opcoes -> Pesquisar -> teclado "OUTRO" -> START
+    h.tap(Button::Y);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "ChoiceDialog");
+    h.tap(Button::Down);
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Keyboard");
+    auto typeKey = [&](int row, int col) {
+        for (int i = 0; i < row; ++i) h.tap(Button::Down);
+        for (int i = 0; i < col; ++i) h.tap(Button::Right);
+        h.tap(Button::A);
+        for (int i = 0; i < row; ++i) h.tap(Button::Up);
+        for (int i = 0; i < col; ++i) h.tap(Button::Left);
+    };
+    typeKey(1, 4);  // O
+    typeKey(2, 0);  // U
+    h.shot("84_teclado_pesquisa");
+    h.tap(Button::Start);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "Library");
+    // Grade (Y -> visualizacao)
+    h.tap(Button::Y);
+    h.waitIdle();
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(h.app.library().options().view == 1);
+    h.idle(0.4f);
+    h.shot("85_meus_jogos_grade");
+    // Detalhes e Jogar
+    h.tap(Button::A);
+    h.waitIdle();
+    CHECK(std::string(h.app.topScreenName()) == "GameDetail");
+    h.shot("86_detalhes_do_jogo");
+    h.tap(Button::A);  // Jogar -> confirmacao
+    h.waitIdle();
+    h.tap(Button::Left);
+    h.tap(Button::A);  // Sim: na previa nao executa (motivo informado), nada encerra
+    h.waitIdle();
+    CHECK(!h.app.quitRequested());
+    std::string why;
+    const std::string gid = h.app.library().view(Library::Filter::Search, "OU").empty()
+                                ? h.app.library().games()[0].id
+                                : h.app.library().games()[size_t(h.app.library().view(Library::Filter::Search, "OU")[0])].id;
+    CHECK(!h.app.launchGame(gid, &why) && why.find("prévia") != std::string::npos);
+    // Plataforma que inicia titulos: valida e encerra para iniciar o default.xex
+    h.plat.setLaunchable(true);
+    CHECK(h.app.launchGame(gid, &why));
+    CHECK(h.app.quitRequested() && endsWithNoCase(h.app.launchOnExit(), "default.xex"));
+    CHECK(h.app.library().find(gid)->lastPlayed > 0);
+    h.app.shutdown();
+    CHECK(fileExists(base + "dados/biblioteca.ini"));
+    CHECK(h.plat.renderer().textureCount() == 0);
+
+    section("Meus Jogos: aparencia segue a interface, mesmos jogos");
+    Harness h2(base + "dados/", 1280, 720, false);
+    h2.app.init();
+    h2.idle(3.0f);
+    h2.waitIdle();
+    CHECK(h2.app.library().games().size() == 2);  // persistido
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h2.app.openDashboard(DashboardId(d));
+        h2.waitIdle();
+        h2.app.openLibrary();
+        h2.waitIdle();
+        h2.idle(0.5f);
+        CHECK(std::string(h2.app.topScreenName()) == "Library" && h2.app.libraryStyle() == DashboardId(d));
+        h2.shot(std::string("87_meus_jogos_") + dashboardInfo(DashboardId(d)).key);
+        h2.tap(Button::B);
+        h2.waitIdle();
+    }
+    // Jogo apagado por fora: nao inicia, fica indisponivel
+    std::remove((base + "hdd/Games/Outro Jogo/default.xex").c_str());
+    h2.plat.setLaunchable(true);
+    std::string why2;
+    for (const GameEntry& g : h2.app.library().games())
+        if (g.titleId == 0x41410042) CHECK(!h2.app.launchGame(g.id, &why2) && why2.find("não existe") != std::string::npos);
+    CHECK(!h2.app.quitRequested());
+    h2.app.shutdown();
+
+    section("Perfil conectado (somente leitura) e troca de perfil");
+    Harness h3(freshDir("perfil"), 1280, 720, false);
+    UserProfile p;
+    p.supported = true;
+    p.signedIn = true;
+    p.userIndex = 0;
+    p.gamertag = "Jogador Teste";
+    h3.plat.setProfile(p);
+    h3.app.init();
+    CHECK(std::string(demoProfile().gamertag) == "Jogador Teste" && demoProfile().real);
+    CHECK(profilePointsText(demoProfile()) == "Gamerscore não lido");
+    const unsigned v0 = h3.app.profileVersion();
+    p.gamertag = "Outro Perfil";
+    h3.plat.setProfile(p);
+    h3.idle(2.5f);
+    CHECK(h3.app.profileVersion() != v0 && std::string(demoProfile().gamertag) == "Outro Perfil");
+    p.signedIn = false;
+    h3.plat.setProfile(p);
+    h3.idle(2.5f);
+    CHECK(!demoProfile().real && std::string(demoProfile().gamertag) == "Nenhum perfil conectado");
+    h3.app.openDashboard(DashboardId::Nxe);
+    h3.waitIdle();
+    h3.idle(0.5f);
+    h3.shot("88_nxe_sem_perfil");
+    h3.app.shutdown();
+}
+
 static void testSoak() {
     section("Fase 9: teste de resistencia (entradas aleatorias em todas as telas)");
     Harness h(tempDir("soak"));
@@ -1332,7 +2015,7 @@ static void testSoak() {
     for (int i = 0; i < kSteps; ++i) {
         std::string top = h.app.topScreenName();
         Button b = pool[rnd() % poolN];
-        if (top == "Dialog") b = Button::B;  // nunca confirma sair/restaurar
+        if (top == "Dialog" || top == "ChoiceDialog") b = Button::B;  // nunca confirma sair/restaurar
         if (i % 600 == 300) {
             // abre um dashboard aleatorio pelo fluxo normal
             h.app.openDashboard(DashboardId(rnd() % kDashboardCount));
@@ -1446,7 +2129,7 @@ static void testRealOriginals() {
     section("Sons originais reais (pasta local do usuario)");
     std::string dir = real;
     if (dir.back() != '/' && dir.back() != '\\') dir += '/';
-    Harness h(dir);
+    Harness h(dir, 1280, 720, false);  // pasta REAL do usuario: nao semeia biblioteca de teste
     h.app.init();
     OrigReport rep = h.plat.mixer().originalsReport();
     for (int t = 1; t < kSoundThemeCount; ++t)
@@ -1584,7 +2267,7 @@ static void testCorruptSettingsAtStartup() {
     FILE* f = std::fopen((dir + "neutrox.ini").c_str(), "wb");
     std::fputs("default_dashboard=xyz\nsfx_volume=-5\n", f);
     std::fclose(f);
-    Harness h(dir);
+    Harness h(dir, 1280, 720, false);  // pasta REAL do usuario: nao semeia biblioteca de teste
     CHECK(h.app.init());
     CHECK(h.app.settings().defaultDashboard.empty() && h.app.settings().sfxVolume == 80);
     Settings reread;
@@ -1604,6 +2287,145 @@ static void testCorruptSettingsAtStartup() {
     h2.waitIdle();
     CHECK(h2.app.activeDashboard() == DashboardId::MetroV1);
     h2.app.shutdown();
+}
+
+static void testParallelRenderer() {
+    section("Renderizador paralelo: faixas identicas ao modo imediato, pixel a pixel");
+    // 1) Cenas completas desenhadas direto (previas das cinco interfaces) em 720p e 1080p.
+    const int sizes[][2] = {{1280, 720}, {1920, 1080}, {640, 480}};
+    for (const auto& sz : sizes) {
+        SoftRenderer a(sz[0], sz[1]), b(sz[0], sz[1]);
+        b.setThreads(4);
+        bool same = true;
+        for (int d = 0; d < kDashboardCount; ++d) {
+            for (float t : {0.0f, 1.7f}) {
+                a.beginFrame();
+                dashboardInfo(DashboardId(d)).drawPreview(a, t);
+                a.endFrame();
+                b.beginFrame();
+                dashboardInfo(DashboardId(d)).drawPreview(b, t);
+                b.endFrame();
+                if (std::memcmp(a.pixels(), b.pixels(), size_t(sz[0]) * sz[1] * 4) != 0) same = false;
+            }
+        }
+        CHECK(same);
+        CHECK(b.lastCommandCount() > 0);
+    }
+    // 2) Aplicativo inteiro: mesma sequencia de entradas, uma instancia imediata e outra com 6 threads.
+    // Mesma pasta de dados: o retrato da biblioteca e global e os caminhos aparecem na tela.
+    Harness h1(tempDir("par_ab")), h6(tempDir("par_ab"));
+    h6.plat.soft().setThreads(6);
+    h1.app.init();
+    h6.app.init();
+    auto both = [&](uint32_t buttons, int frames) {
+        h1.step(buttons, frames);
+        h6.step(buttons, frames);
+    };
+    both(0, 200);
+    int compared = 0, equal = 0;
+    auto compare = [&]() {
+        ++compared;
+        if (std::memcmp(h1.plat.soft().pixels(), h6.plat.soft().pixels(), size_t(1280) * 720 * 4) == 0) ++equal;
+    };
+    compare();
+    for (int d = 0; d < kDashboardCount; ++d) {
+        h1.app.openDashboard(DashboardId(d));
+        h6.app.openDashboard(DashboardId(d));
+        both(0, 60);
+        compare();
+        const Button seq[] = {Button::Right, Button::Down, Button::RB, Button::Right, Button::LB, Button::Left, Button::Up};
+        for (Button bt : seq) {
+            both(bit(bt), 1);
+            both(0, 3);
+            compare();  // no meio da animacao (desenho ao vivo)
+            both(0, 30);
+            compare();  // parado (cache de cena)
+        }
+        both(bit(Button::Start), 1);  // menu global sobreposto
+        both(0, 20);
+        compare();
+        both(bit(Button::B), 1);
+        both(0, 20);
+    }
+    std::printf("  %d quadros comparados, %d identicos\n", compared, equal);
+    CHECK(compared > 50 && equal == compared);
+    h1.app.shutdown();
+    h6.app.shutdown();
+    CHECK(h6.plat.renderer().textureCount() == 0);
+
+    // 3) Tempo: quadro ao vivo do pior caso medido (troca de canal do NXE), 1 x 4 threads.
+    auto live = [](int threads) {
+        Harness h(tempDir("par_perf"));
+        h.plat.soft().setThreads(threads);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        h.app.openDashboard(DashboardId::Nxe);
+        h.waitIdle();
+        h.idle(1.0f);
+        std::vector<double> ft;
+        for (int round = 0; round < 6; ++round) {
+            h.step(bit(round % 2 ? Button::Up : Button::Down), 1);
+            for (int f = 0; f < 24; ++f) {
+                double t0 = nowMs();
+                h.step(0, 1);
+                ft.push_back(nowMs() - t0);
+            }
+        }
+        std::sort(ft.begin(), ft.end());
+        h.app.shutdown();
+        return ft[ft.size() / 2];
+    };
+    const double t1 = live(1), t4 = live(4);
+    std::printf("  NXE troca de canal ao vivo: 1 thread %.2f ms, 4 threads %.2f ms (%.1fx)\n", t1, t4, t1 / t4);
+    CHECK(t4 < t1);
+}
+
+// Percorre cada eixo de navegacao ate o fim e volta (inclusive dando a volta do ultimo
+// para o primeiro) medindo o PIOR quadro de logica e de desenho, para achar travadas.
+static void testNavigationHitches() {
+    section("Navegacao: primeiro -> ultimo -> primeiro sem picos (cinco interfaces)");
+    struct Axis { Button fwd, back; const char* name; };
+    const Axis axes[] = {{Button::Right, Button::Left, "esq/dir"}, {Button::Down, Button::Up, "cima/baixo"},
+                         {Button::RB, Button::LB, "LB/RB"}};
+    double worstAll = 0;
+    for (int d = 0; d < kDashboardCount; ++d) {
+        Harness h(tempDir("nav_hitch"));
+        h.plat.setRealClock(true);
+        h.app.init();
+        h.idle(3.0f);
+        h.waitIdle();
+        h.app.openDashboard(DashboardId(d));
+        h.waitIdle();
+        h.idle(1.0f);
+        for (const Axis& ax : axes) {
+            double worstUpd = 0, worstDraw = 0;
+            std::vector<double> fwdT, backT;
+            auto run = [&](Button b, int n, std::vector<double>& times) {
+                for (int i = 0; i < n; ++i) {
+                    h.step(bit(b), 1);
+                    for (int f = 0; f < 8; ++f) {
+                        const FrameStats& st = h.app.stats();
+                        worstUpd = std::max(worstUpd, double(st.updateMs));
+                        worstDraw = std::max(worstDraw, double(st.renderMs));
+                        times.push_back(double(st.updateMs + st.renderMs));
+                        h.step(0, 1);
+                    }
+                }
+            };
+            run(ax.fwd, 14, fwdT);   // ate o fim (e alem: da a volta onde a interface permite)
+            run(ax.back, 28, backT);  // de volta ao comeco e alem
+            auto p95 = [](std::vector<double> v) { std::sort(v.begin(), v.end()); return v[v.size() * 95 / 100]; };
+            const double pf = p95(fwdT), pb = p95(backT);
+            std::printf("  %-9s %-10s pior logica %5.2f ms, pior desenho %5.2f ms; p95 ida %5.2f, volta %5.2f\n",
+                        dashboardInfo(DashboardId(d)).name, ax.name, worstUpd, worstDraw, pf, pb);
+            worstAll = std::max(worstAll, worstUpd);
+            // Voltar ao comeco nao pode custar muito mais que ir ao fim (travada relatada no console).
+            CHECK(pb < pf * 2.0 + 2.0);
+        }
+        h.app.shutdown();
+    }
+    CHECK(worstAll < 8.0);  // logica de navegacao nunca deve pesar (o desenho e paralelo/cacheado)
 }
 
 static void testPerformance() {
@@ -1728,6 +2550,13 @@ int main(int argc, char** argv) {
     testErrorRecovery();
     testCorruptSettingsAtStartup();
     testOptionPersistence();
+    testExitTargets();
+    testTitleMetadata();
+    testLibraryScan();
+    testCovers();
+    testLibraryApp();
+    testParallelRenderer();
+    testNavigationHitches();
     testSoak();
     testMemoryReport();
     testPerformance();

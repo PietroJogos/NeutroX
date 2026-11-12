@@ -28,3 +28,4 @@ dist/
 
 # Python
 __pycache__/
+test_output/

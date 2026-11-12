@@ -56,7 +56,10 @@ VTile art(int c, int r, int w, int h, Icon ic, std::string label, Kind k, int id
 }
 VTile game(int c, int r, int w, int h, int gi, const char* prefix = "") {
     int n = 0;
-    const DemoGame& g = demoGames(n)[gi];
+    const DemoGame* gl = demoGames(n);
+    // Sem jogo nesta posicao: bloco que abre a biblioteca (nenhum jogo ficticio).
+    if (gi >= n) return t(c, r, w, h, Icon::Controller, n ? "Meus jogos" : "Adicione jogos (Configurações > Jogos)", Kind::Library, 0, Style::Dark);
+    const DemoGame& g = gl[gi];
     return art(c, r, w, h, g.arcade ? Icon::Star : Icon::Controller, std::string(prefix) + g.title, Kind::Game, gi, g.artSeed,
                g.c1, g.c2);
 }
@@ -120,7 +123,13 @@ std::vector<VCategory> buildCategories() {
 }
 
 const std::vector<VCategory>& categories() {
-    static const std::vector<VCategory> c = buildCategories();
+    // Refeita quando a biblioteca publicada muda (so entre aberturas de interface).
+    static std::vector<VCategory> c;
+    static unsigned ver = 0;
+    if (ver != libraryGamesVersion()) {
+        c = buildCategories();
+        ver = libraryGamesVersion();
+    }
     return c;
 }
 
@@ -146,12 +155,16 @@ struct LibFilter {
     const char* genre;  // nullptr = todos; "*arcade" = arcade
     bool az;
 };
-const LibFilter kFilters[] = {{"todos", nullptr, false},     {"ação", "Ação", false},           {"aventura", "Aventura", false},
-                              {"corrida", "Corrida", false},  {"quebra-cabeça", "Quebra-cabeça", false},
-                              {"simulação", "Simulação", false}, {"arcade", "*arcade", false},   {"a–z", nullptr, true}};
+// Filtros por tipo REAL do titulo (lido do cabecalho), nao por genero.
+const LibFilter kFilters[] = {{"todos", nullptr, false},
+                              {"jogos", "Jogo", false},
+                              {"games on demand", "Games on Demand", false},
+                              {"arcade", "*arcade", false},
+                              {"aplicativos", "Aplicativo", false},
+                              {"a–z", nullptr, true}};
 constexpr int kFilterCount = int(sizeof(kFilters) / sizeof(kFilters[0]));
 
-std::vector<int> libraryGames(int filter) {
+std::vector<int> libraryGames(int filter, int* total = nullptr) {
     int n = 0;
     const DemoGame* g = demoGames(n);
     std::vector<int> out;
@@ -162,6 +175,8 @@ std::vector<int> libraryGames(int filter) {
         else out.push_back(i);
     }
     if (f.az) std::sort(out.begin(), out.end(), [g](int a, int b) { return std::strcmp(g[a].title, g[b].title) < 0; });
+    if (total) *total = int(out.size());
+    if (out.size() > 8) out.resize(8);  // a pagina mostra 8; Y abre Meus Jogos com todos
     return out;
 }
 
@@ -195,8 +210,15 @@ InfoRow row(Icon ic, std::string tt, std::string s, int act = kInfo, float prog 
 
 VDetail gameDetail(int gi, const char* category) {
     int n = 0;
-    const DemoGame& g = demoGames(n)[gi];
+    const DemoGame* gl = demoGames(n);
     VDetail d;
+    if (gi < 0 || gi >= n) {
+        d.category = category;
+        d.title = "biblioteca vazia";
+        d.desc = "Adicione pastas de jogos em Configurações > Jogos.";
+        return d;
+    }
+    const DemoGame& g = gl[gi];
     d.category = category;
     d.title = g.title;
     d.subtitle = std::string(g.genre) + " · " + g.year + (g.arcade ? " · arcade" : "");
@@ -205,10 +227,8 @@ VDetail gameDetail(int gi, const char* category) {
     d.seed = g.artSeed;
     d.c1 = g.c1;
     d.c2 = g.c2;
-    d.rows = {row(Icon::Controller, "jogar", "demonstração (não executável)", kPlay),
-              row(Icon::Trophy, "conquistas", std::to_string(g.points) + " de " + std::to_string(g.maxPoints) + " pontos", kInfo,
-                  float(g.points) / g.maxPoints),
-              row(Icon::Plus, "complementos", "nenhum (demonstração)"), row(Icon::Info, "detalhes", d.subtitle)};
+    d.rows = {row(Icon::Controller, "jogar", "detalhes, capa e jogar", kPlay), row(Icon::Info, "detalhes", d.subtitle, kPlay)};
+    for (InfoRow& rw : d.rows) rw.gameId = libraryGameId(gi);
     return d;
 }
 
@@ -225,8 +245,9 @@ VDetail tileDetail(const VCategory& cat, const VTile& tl) {
     const DemoProfile& p = demoProfile();
     switch (tl.index) {
         case 1:
-            d.desc = "Perfil local de demonstração. Nenhuma conta online é usada.";
-            d.rows = {row(Icon::Person, p.gamertag, "nome do jogador"), row(Icon::Trophy, std::to_string(p.points) + " pontos", "pontuação"),
+            d.desc = p.real ? "Perfil conectado no console: só o nome é lido; nada do perfil é alterado."
+                            : "Nenhum perfil conectado (entre pelo Guia do Xbox).";
+            d.rows = {row(Icon::Person, p.gamertag, "nome do jogador"), row(Icon::Trophy, profilePointsText(p), "pontuação"),
                       row(Icon::Mail, p.motto, "lema"), row(Icon::Globe, p.zone, "zona")};
             break;
         case 2: {
@@ -241,10 +262,10 @@ VDetail tileDetail(const VCategory& cat, const VTile& tl) {
             d.rows = {row(Icon::Mail, "Bem-vindo ao Neutro X", "mensagem do sistema · lida")};
             break;
         case 4:
-            d.desc = "Conquistas dos jogos de demonstração.";
+            d.desc = "O Neutro X não lê conquistas do perfil.";
             for (int i = 0; i < n && i < 6; ++i)
-                d.rows.push_back(row(Icon::Trophy, g[i].title, std::to_string(g[i].points) + " / " + std::to_string(g[i].maxPoints), kInfo,
-                                     float(g[i].points) / g[i].maxPoints));
+                d.rows.push_back(row(Icon::Trophy, g[i].title, std::string("conquistas não lidas pelo Neutro X"), kInfo,
+                                     -1.0f));
             break;
         case 31:
             d.desc = "O Neutro X está disponível em português do Brasil.";
@@ -462,11 +483,14 @@ void drawLibrary(IRenderer& r, const VState& st) {
         x += r.measureText(kFilters[i].name, fs) + 30;
     }
     r.fillRect(Rectf{st.filterX, 164, st.filterW, 3}, accentHi(st));
-    std::vector<int> games = libraryGames(st.filter);
+    int total = 0;
+    std::vector<int> games = libraryGames(st.filter, &total);
     TextStyle cnt;
     cnt.size = 16;
     cnt.color = Color(140, 145, 152);
-    std::string c = std::to_string(games.size()) + (games.size() == 1 ? " jogo" : " jogos");
+    std::string c = std::to_string(total) + (total == 1 ? " jogo" : " jogos") +
+                    (total > int(games.size()) ? "  ·  mostrando " + std::to_string(games.size()) + " (Y: todos em Meus Jogos)" : "");
+    if (total == 0) c = "nenhum jogo: adicione pastas em Configurações > Jogos";
     r.drawText(c.c_str(), 150, 180, cnt);
     for (int i = 0; i < int(games.size()); ++i) {
         if (i == st.libSel) continue;
@@ -499,8 +523,8 @@ void drawLibrary(IRenderer& r, const VState& st) {
         std::string line = std::string(gm.genre) + " · " + gm.year + " · " + gm.description;
         r.drawText(line.c_str(), 150, 610, info);
     }
-    drawHints(r, {{Button::LB, "/"}, {Button::RB, "filtro"}, {Button::A, "informações"}, {Button::B, "voltar"}}, 150, 664, 30,
-              Color(225, 228, 232));
+    drawHints(r, {{Button::LB, "/"}, {Button::RB, "filtro"}, {Button::A, "informações"}, {Button::Y, "meus jogos"}, {Button::B, "voltar"}},
+              150, 664, 30, Color(225, 228, 232));
     r.popOffset();
     r.popAlpha();
 }
@@ -956,6 +980,7 @@ private:
         if (before != st_.libSel) { moveLibHighlight(false); ctx.sfx(Sfx::Navigate); }
         else if (in.press(Button::Right) || in.press(Button::Left) || in.press(Button::Up) || in.press(Button::Down)) ctx.sfx(Sfx::Error, 0.4f);
         if (in.press(Button::A) && n > 0) openDetail(ctx, gameDetail(games[size_t(st_.libSel)], "biblioteca de jogos"), true);
+        if (in.press(Button::Y)) { ctx.sfx(Sfx::Confirm); ctx.app->openLibrary(); }
         if (in.press(Button::B)) { st_.libOpen = false; libAnim_.set(0); ctx.sfx(Sfx::Back); }
     }
 
@@ -967,9 +992,9 @@ private:
         if (before != st_.detailSel) ctx.sfx(Sfx::Navigate);
         if (in.press(Button::A) && n > 0) {
             const InfoRow& rw = st_.detail.rows[size_t(st_.detailSel)];
-            if (rw.action == kPlay) {
-                ctx.sfx(Sfx::Error, 0.7f);
-                ctx.app->toast("Jogos de demonstração não são executados pelo Neutro X");
+            if (rw.action == kPlay && !rw.gameId.empty()) {
+                ctx.sfx(Sfx::Confirm);
+                ctx.app->openGameDetails(rw.gameId);
             } else {
                 ctx.sfx(Sfx::Open, 0.8f);
                 ctx.app->toast(rw.title + ": item de demonstração (somente informativo)");

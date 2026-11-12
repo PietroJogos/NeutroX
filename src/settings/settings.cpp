@@ -54,7 +54,9 @@ void Settings::sanitize() {
     if (int(animIntensity) < 0 || int(animIntensity) > 2) animIntensity = AnimIntensity::Medium;
     if (accentTheme < 0 || accentTheme >= kAccentThemeCount) accentTheme = 0;
     if (!validDashboard(defaultDashboard)) defaultDashboard.clear();
-    if (dashboardSounds != 0 && dashboardSounds != 1) dashboardSounds = 0;
+    if (dashboardSounds < 0 || dashboardSounds > 2) dashboardSounds = 0;
+    if (renderQuality < 0 || renderQuality > 2) renderQuality = 0;
+    if (auroraPath.size() > 240) auroraPath.clear();
     language = "pt-BR";  // unico idioma disponivel nesta versao
 }
 
@@ -78,7 +80,10 @@ std::string serializeSettings(const Settings& s) {
     o << "accent_theme=" << s.accentTheme << "\n";
     o << "language=" << s.language << "\n";
     o << "show_fps=" << (s.showFps ? 1 : 0) << "\n";
-    o << "dashboard_sounds=" << (s.dashboardSounds == 1 ? "recriados" : "originais") << "\n";
+    o << "dashboard_sounds="
+      << (s.dashboardSounds == 1 ? "recriados" : s.dashboardSounds == 2 ? "originais_e_recriados" : "originais") << "\n";
+    o << "aurora_path=" << s.auroraPath << "\n";
+    o << "render_quality=" << s.renderQuality << "\n";
     for (const auto& kv : s.dashOptions) o << "opt." << kv.first << "=" << kv.second << "\n";
     return o.str();
 }
@@ -104,7 +109,9 @@ LoadResult parseSettings(const std::string& text, Settings& out) {
         else if (k == "accent_theme") { if (parseInt(v, n) && n >= 0 && n < kAccentThemeCount) s.accentTheme = n; else bad = true; }
         else if (k == "language") { if (v != "pt-BR") bad = true; }
         else if (k == "show_fps") { if (parseBool(v, b)) s.showFps = b; else bad = true; }
-        else if (k == "dashboard_sounds") { if (v == "originais") s.dashboardSounds = 0; else if (v == "recriados") s.dashboardSounds = 1; else bad = true; }
+        else if (k == "dashboard_sounds") { if (v == "originais") s.dashboardSounds = 0; else if (v == "recriados") s.dashboardSounds = 1; else if (v == "originais_e_recriados") s.dashboardSounds = 2; else bad = true; }
+        else if (k == "aurora_path") { if (v.size() <= 240) s.auroraPath = v; else bad = true; }
+        else if (k == "render_quality") { if (parseInt(v, n) && n >= 0 && n <= 2) s.renderQuality = n; else bad = true; }
         else if (k.compare(0, 4, "opt.") == 0) {
             std::string name = k.substr(4);
             bool okName = !name.empty() && name.size() <= 40;

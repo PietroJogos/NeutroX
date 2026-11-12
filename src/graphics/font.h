@@ -30,6 +30,16 @@ public:
     float advance(uint32_t codepoint, float pixelSize, FontWeight weight);
     bool hasGlyph(uint32_t codepoint) const;
 
+    // So consulta (nunca insere): seguro com varias threads lendo enquanto ninguem insere.
+    // nullptr se o glifo nao estiver no cache.
+    const GlyphBitmap* findGlyph(uint32_t codepoint, float pixelSize, FontWeight weight) const;
+    // Enquanto houver um quadro gravado pendente (pin), o cache nao e esvaziado:
+    // as faixas paralelas leem os glifos aquecidos na gravacao.
+    void pin() { ++pins_; }
+    void unpin() { if (pins_ > 0) --pins_; }
+    // Esvazia o cache se passou do limite e nada estiver fixado (chamado no inicio do quadro).
+    void collect() { if (clearPending_ && pins_ == 0) clearCache(); }
+
     void clearCache();
     size_t cacheBytes() const { return cacheBytes_; }
     size_t cacheEntries() const { return cache_.size(); }
@@ -46,8 +56,11 @@ private:
 
     std::unordered_map<uint32_t, Def> defs_;
     Def fallback_;
+    static uint64_t key(uint32_t cp, float pixelSize, FontWeight weight, int* sizeKeyOut);
     std::unordered_map<uint64_t, GlyphBitmap> cache_;
     size_t cacheBytes_ = 0;
+    int pins_ = 0;
+    bool clearPending_ = false;
 };
 
 // Decodifica o proximo codepoint UTF-8 (avanca p). Retorna 0 no fim da string.

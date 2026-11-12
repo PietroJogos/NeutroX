@@ -145,7 +145,7 @@ bool decodeWav(const std::vector<uint8_t>& d, std::vector<int16_t>& out, std::st
         for (int c = 0; c < ch; ++c) {
             const uint8_t* s = f + c * (bits / 8);
             float v;
-            if (fmt == 3) { float x; std::memcpy(&x, s, 4); v = x; }
+            if (fmt == 3) { uint32_t u = le32(s); float x; std::memcpy(&x, &u, 4); v = x; }
             else if (bits == 8) v = (s[0] - 128) / 128.0f;
             else if (bits == 16) v = int16_t(le16(s)) / 32768.0f;
             else { int32_t x = int32_t((uint32_t(s[0]) << 8) | (uint32_t(s[1]) << 16) | (uint32_t(s[2]) << 24)) >> 8; v = x / 8388608.0f; }

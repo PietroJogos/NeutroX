@@ -53,7 +53,7 @@ std::vector<KSection> buildSections() {
     const Color green = Color::hex(0x8CC63A), greenD = Color::hex(0x5E9A1E);
     s[0] = {"Início", "INÍCIO", {}};
     s[0].cards = {
-        {Icon::Controller, "Jogos", g[0].c1, g[0].c2, Kind::Generic, 1, true, false},
+        {Icon::Controller, "Meus Jogos", Color::hex(0x5AA01E), Color::hex(0x2E5A10), Kind::Generic, 1, true, false},
         {Icon::Music, "Música", Color::hex(0x111111), Color::hex(0x2A2A2A), Kind::Generic, 3, false, false},
         {Icon::Video, "Vídeos", Color::hex(0xDDEEF8), Color::hex(0x8FC0E0), Kind::Generic, 4, false, true},
         {Icon::Apps, "Aplicativos", Color::hex(0x3A9AD8), Color::hex(0x1B4F86), Kind::Generic, 2, true, false},
@@ -63,8 +63,10 @@ std::vector<KSection> buildSections() {
         {Icon::Gear, "Configurações", Color::hex(0x2F64B0), Color::hex(0x1F4A8A), Kind::Generic, 5, false, false},
     };
     s[1] = {"Jogos", "JOGOS", {}};
-    for (int i = 0; i < n && i < 8; ++i)
+    // Jogos REAIS da biblioteca; o ultimo cartao abre Meus Jogos (tambem quando vazia).
+    for (int i = 0; i < n && i < 11; ++i)
         s[1].cards.push_back({g[i].arcade ? Icon::Star : Icon::Controller, g[i].title, g[i].c1, g[i].c2, Kind::Game, i, true, false});
+    s[1].cards.push_back({Icon::List, n ? "Meus Jogos" : "Meus Jogos (vazio)", green, greenD, Kind::Generic, 12, false, false});
     s[2] = {"Aplicativos", "APLICATIVOS", {}};
     const char* apps[] = {"Relógio", "Clima", "Fotos", "Notas", "Calculadora", "Mapas"};
     const Icon appIcons[] = {Icon::Clock, Icon::Globe, Icon::Picture, Icon::List, Icon::Plus, Icon::Home};
@@ -99,7 +101,13 @@ std::vector<KSection> buildSections() {
 }
 
 const std::vector<KSection>& sections() {
-    static const std::vector<KSection> s = buildSections();
+    // Refeita quando a biblioteca publicada muda (so entre aberturas de interface).
+    static std::vector<KSection> s;
+    static unsigned ver = 0;
+    if (ver != libraryGamesVersion()) {
+        s = buildSections();
+        ver = libraryGamesVersion();
+    }
     return s;
 }
 
@@ -159,19 +167,19 @@ KDetail buildDetail(const KCard& c, Context* ctx) {
     const DemoProfile& p = demoProfile();
     switch (c.kind) {
         case Kind::Game: {
+            if (c.index < 0 || c.index >= n) break;
             const DemoGame& gm = g[c.index];
             d.subtitle = std::string(gm.genre) + " · " + gm.year;
             d.desc = gm.description;
             d.artSeed = gm.artSeed;
-            d.buttons = {btn(Icon::Controller, "Jogar", "Demonstração (não executável)", kBtnPlay),
-                         btn(Icon::Trophy, "Conquistas", std::to_string(gm.points) + " de " + std::to_string(gm.maxPoints) + " pontos",
-                             kBtnInfo, float(gm.points) / gm.maxPoints),
-                         btn(Icon::Info, "Detalhes", d.subtitle)};
+            d.buttons = {btn(Icon::Controller, "Jogar", "Detalhes, capa e Jogar", kBtnPlay), btn(Icon::Info, "Detalhes", d.subtitle, kBtnPlay)};
+            for (InfoRow& b : d.buttons) b.gameId = libraryGameId(c.index);
             break;
         }
         case Kind::Profile:
-            d.subtitle = std::string(p.gamertag) + " · " + std::to_string(p.points) + " pontos";
-            d.desc = "Perfil local de demonstração. Nenhuma conta online é usada.";
+            d.subtitle = std::string(p.gamertag) + " · " + profilePointsText(p);
+            d.desc = p.real ? "Perfil conectado no console: somente o nome é lido. Nada do perfil é alterado."
+                            : "Nenhum perfil conectado (entre pelo Guia do Xbox).";
             d.buttons = {btn(Icon::Person, p.gamertag, "Nome do jogador"), btn(Icon::Mail, p.motto, "Lema"),
                          btn(Icon::Globe, p.zone, "Zona de jogo")};
             break;
@@ -309,7 +317,7 @@ void drawCard(IRenderer& r, const KCard& c, const Rectf& rc, bool fav, int secti
         ts.size = 18 * k;
         ts.color = Color(255, 255, 255, 230);
         r.drawText(p.gamertag, rc.x + 12 * k, rc.y + 44 * k, ts);
-        std::string pts = std::to_string(p.points) + " P";
+        std::string pts = profilePointsText(p, true);
         r.drawText(pts.c_str(), rc.x + 12 * k, rc.y + 66 * k, ts);
         r.drawText("Offline", rc.x + 12 * k, rc.bottom() - 30 * k, ts);
         drawIcon(r, Icon::Person, rc.x + rc.w * 0.74f, rc.y + rc.h * 0.6f, 70 * k, Color(255, 255, 255, 200), c.b);
@@ -684,6 +692,7 @@ private:
         const KCard& card = secs[size_t(s)].cards[size_t(sel)];
         if (in.press(Button::A)) {
             if (card.kind == Kind::OpenSettings) { ctx.sfx(Sfx::Confirm); ctx.app->openSettings(); }
+            else if (card.kind == Kind::Generic && (card.index == 1 || card.index == 12)) { ctx.sfx(Sfx::Confirm); ctx.app->openLibrary(); }
             else if (card.kind == Kind::OpenAbout) { ctx.sfx(Sfx::Confirm); ctx.app->openAbout(); }
             else if (s == 0 && card.kind == Kind::Generic && card.index >= 1 && card.index <= 5) {
                 // atalhos do Inicio: o indice do cartao e a secao de destino
@@ -738,9 +747,9 @@ private:
         if (in.press(Button::A) && n > 0) {
             const InfoRow& b = st_.detail.buttons[size_t(st_.detailSel)];
             if (b.action == kBtnClose) { closeDetail(ctx); return; }
-            if (b.action == kBtnPlay) {
-                ctx.sfx(Sfx::Error, 0.7f);
-                ctx.app->toast("Jogos de demonstração não são executados pelo Neutro X");
+            if (b.action == kBtnPlay && !b.gameId.empty()) {
+                ctx.sfx(Sfx::Confirm);
+                ctx.app->openGameDetails(b.gameId);
             } else {
                 ctx.sfx(Sfx::Open, 0.8f);
                 ctx.app->toast(b.title + ": item de demonstração (somente informativo)");

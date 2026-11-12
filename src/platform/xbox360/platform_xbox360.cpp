@@ -8,10 +8,18 @@
 // Audio: o Mixer (44,1 kHz estereo) e reamostrado para 48 kHz e entregue ao
 //   driver de audio do console por uma thread propria (xsdk_audio_*).
 // Arquivos: tudo do Neutro X fica em game:\ (a pasta de onde foi iniciado).
-// Sair: main retorna e o xsdk devolve o console ao dashboard/inicializador.
+// Sair (ver docs/SAIDA_E_INICIALIZACAO.md): o Neutro X libera audio, GPU e
+//   tela e entao:
+//   - "Voltar ao Aurora"/jogos: xsdk_launch(caminho) -> exit -> XamLoaderLaunchTitle
+//     (troca de aplicativo; nao reinicia o console);
+//   - "Voltar ao Xbox Dashboard": o mesmo com \SystemRoot\dash.xex;
+//   - padrao: main retorna -> exit -> XamLoaderTerminateTitle (dashboard do sistema,
+//     que o DashLaunch pode redirecionar).
+//   Nenhuma funcao de reinicializacao (HalReturnToFirmware etc.) e usada.
 //
 // Nada aqui grava na NAND, altera o sistema ou mexe na inicializacao.
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -29,10 +37,15 @@ extern "C" {
 #include "xsdk/shader.h"
 #include "xsdk/splash.h"
 #include "xsdk/texture.h"
+#include "xsdk/thread.h"
+#include "xsdk/xam.h"
 }
+#include <sys/stat.h>
+#include <pthread.h>
 #include "NeutroX_shaders.h"
 
 #include "core/app.h"
+#include "core/fsutil.h"
 #include "core/log.h"
 #include "graphics/soft_renderer.h"
 #include "platform/platform.h"
@@ -68,6 +81,12 @@ public:
         height_ = h;
         if (w != 1280 || h != 720) renderer_.resize(int(w), int(h));  // ex.: 640x480 em saida entrelacada
         xsdk_log_write("neutrox: tela %ux%u", unsigned(w), unsigned(h));
+        // Rasterizacao em 6 faixas: a thread principal (hardware 0) e uma auxiliar em
+        // cada thread de hardware 1..5 do Xenon (docs/GUIDE.md do xsdk, "Threads").
+        renderer_.setThreads(6, [](int i) {
+            const NTSTATUS ms = xsdk_thread_move(uint32_t(i));
+            if (!NT_SUCCESS(ms)) xsdk_log_write("neutrox: xsdk_thread_move(%d) 0x%08X", i, unsigned(ms));
+        });
 
         st = xsdk_texture_create(&frameTex_, XSDK_FORMAT_A8R8G8B8, w, h, 1, false);
         if (!NT_SUCCESS(st)) { xsdk_log_write("neutrox: xsdk_texture_create falhou: 0x%08X", unsigned(st)); return false; }
@@ -200,6 +219,60 @@ public:
 
     std::string dataPath() override { return "game:/"; }
 
+    std::vector<StorageRoot> storageRoots() override {
+        // Unidades nomeadas pelo xsdk (docs/GUIDE.md, "Files and paths"); so as presentes.
+        static const struct { const char* path; const char* label; const char* name; } kDrives[] = {
+            {"hdd:/", "Disco rígido (Hdd1:)", "Hdd1"}, {"usb0:/", "USB 0 (Usb0:)", "Usb0"},
+            {"usb1:/", "USB 1 (Usb1:)", "Usb1"},       {"usb2:/", "USB 2 (Usb2:)", "Usb2"},
+            {"mu0:/", "Unidade de memória 0 (Mu0:)", "Mu0"}, {"mu1:/", "Unidade de memória 1 (Mu1:)", "Mu1"},
+        };
+        std::vector<StorageRoot> out;
+        for (const auto& d : kDrives) {
+            struct stat st;
+            if (stat(d.path, &st) == 0 && S_ISDIR(st.st_mode)) out.push_back({d.path, d.label, d.name});
+        }
+        return out;
+    }
+    bool canLaunchTitles() const override { return true; }
+    // O kernel liga \SystemRoot a pasta do sistema (flash ou $SystemUpdate); o xsdk passa
+    // caminhos iniciados por '/' ao kernel como estao. Somente leitura (stat) e inicializacao.
+    std::string systemDashboardPath() override { return "/SystemRoot/dash.xex"; }
+
+    AudioDeviceStatus audioStatus() override {
+        AudioDeviceStatus s;
+        s.present = true;
+        s.open = audioOpen_;
+        s.detail = audioDetail_;
+        if (audioOpen_) {
+            XsdkAudioStats st;
+            std::memset(&st, 0, sizeof st);
+            xsdk_audio_stats(&st);
+            s.framesPlayed = st.played;
+            s.framesSilent = st.silent;
+        }
+        return s;
+    }
+
+    UserProfile userProfile() override {
+        UserProfile p;
+        p.supported = true;
+        uint32_t index = XSDK_XAM_USER_NONE;
+        char tag[XSDK_XAM_GAMERTAG_BYTES];
+        std::memset(tag, 0, sizeof tag);
+        const uint32_t res = xsdk_xam_signed_in_user(&index, tag);
+        if (res == ERROR_SUCCESS && index != XSDK_XAM_USER_NONE) {
+            p.signedIn = true;
+            p.userIndex = int(index);
+            p.gamertag = tag;
+            uint64_t xuid = 0;
+            if (XamUserGetXUID(index, 1, &xuid) == ERROR_SUCCESS) p.xuid = xuid;
+            p.detail = "XamUserGetSigninState / XamUserGetName";
+        } else {
+            p.detail = res == ERROR_NO_SUCH_USER ? "nenhum perfil conectado" : "XamUserGetName falhou";
+        }
+        return p;
+    }
+
     void localTime(int& h, int& m, int& d, int& mo, int& y) override {
         std::time_t t = std::time(nullptr);
         std::tm tmv;
@@ -213,16 +286,34 @@ private:
     // ---- audio: Mixer (44,1 kHz, estereo int16) -> driver (48 kHz, 6 canais float)
     void startAudio() {
         NTSTATUS st = xsdk_audio_open(0);
-        if (!NT_SUCCESS(st)) { xsdk_log_write("neutrox: xsdk_audio_open falhou: 0x%08X (sem som)", unsigned(st)); return; }
+        if (!NT_SUCCESS(st)) {
+            char b[96];
+            std::snprintf(b, sizeof b, "xsdk_audio_open falhou: 0x%08X", unsigned(st));
+            audioDetail_ = b;
+            xsdk_log_write("neutrox: %s (sem som)", b);
+            return;
+        }
+        XsdkAudioSpeakers spk = XSDK_AUDIO_SPEAKERS_STEREO;
+        const bool spkOk = NT_SUCCESS(xsdk_audio_speakers(&spk));
+        audioDetail_ = std::string("xsdk_audio aberto, 48 kHz, 6 canais; saida ") +
+                       (spkOk ? (spk == XSDK_AUDIO_SPEAKERS_SURROUND ? "5.1" : "estereo") : "desconhecida");
         audioOpen_ = true;
         audioRun_ = true;
         audioThread_ = std::thread([this]() { audioLoop(); });
+        xsdk_log_write("neutrox: %s", audioDetail_.c_str());
     }
     void stopAudio() {
         if (!audioOpen_) return;
+        // 1) para o alimentador (ele sai em ate 200 ms, no proximo quadro livre ou no tempo limite),
+        // 2) so entao fecha o cliente do driver: nenhum quadro fica pela metade.
         audioRun_ = false;
-        xsdk_audio_close();  // acorda a thread que espera um quadro
         if (audioThread_.joinable()) audioThread_.join();
+        XsdkAudioStats st;
+        std::memset(&st, 0, sizeof st);
+        xsdk_audio_stats(&st);
+        xsdk_log_write("neutrox: audio: %u quadros tocados, %u de silencio por atraso", unsigned(st.played), unsigned(st.silent));
+        const NTSTATUS cs = xsdk_audio_close();
+        if (!NT_SUCCESS(cs)) xsdk_log_write("neutrox: xsdk_audio_close 0x%08X", unsigned(cs));
         audioOpen_ = false;
     }
     void audioLoop() {
@@ -274,20 +365,25 @@ private:
     int presentErrors_ = 0;
     bool gpuOpen_ = false, presentOpen_ = false, texOpen_ = false, shadersLoaded_ = false;
     bool audioOpen_ = false;
+    std::string audioDetail_ = "audio ainda nao iniciado";
     std::atomic<bool> audioRun_{false};
     std::thread audioThread_;
 };
 
 }  // namespace
 
-int main() {
-    xsdk_log_write("neutrox: Neutro X %s para Xbox 360 (xsdk)", kNeutroXVersion);
+namespace {
+
+// Roda o Neutro X e devolve o .xex a iniciar depois (vazio = saida padrao).
+// Toda a plataforma (audio, GPU, tela) e liberada antes de retornar.
+std::string runNeutroX(int& code) {
+    std::string launch;
     Xbox360Platform platform;
     if (!platform.init()) {
         xsdk_log_write("neutrox: falha ao iniciar a plataforma");
-        return 1;
+        code = 1;
+        return launch;
     }
-    int code = 0;
     {
         App app(platform);
         if (!app.init()) {
@@ -301,12 +397,31 @@ int main() {
                 app.frame(platform.pollInput(), dt);
             }
             const FrameStats& st = app.stats();
-            xsdk_log_write("neutrox: %llu quadros, pior quadro %.2f ms", static_cast<unsigned long long>(st.frames),
-                           double(st.worstFrameMs));
+            xsdk_log_write("neutrox: %llu quadros, pior quadro %.2f ms, %llu lentos", static_cast<unsigned long long>(st.frames),
+                           double(st.worstFrameMs), static_cast<unsigned long long>(st.slowFrames));
+            launch = app.launchOnExit();
+            xsdk_log_write("neutrox: encerrando o aplicativo");
             app.shutdown();
         }
     }
+    xsdk_log_write("neutrox: liberando audio, GPU e tela");
     platform.shutdown();
-    xsdk_log_write("neutrox: encerrado, voltando ao inicializador");
+    return launch;
+}
+
+}  // namespace
+
+int main() {
+    xsdk_log_write("neutrox: Neutro X %s para Xbox 360 (xsdk)", kNeutroXVersion);
+    int code = 0;
+    const std::string launch = runNeutroX(code);
+    if (!launch.empty()) {
+        // Troca de aplicativo: o xsdk encerra o titulo (exit) e o XAM inicia o .xex pedido.
+        xsdk_log_write("neutrox: iniciando %s", launch.c_str());
+        xsdk_launch(launch.c_str(), nullptr, 0);
+        // So volta aqui se falhou antes de encerrar (ex.: arquivo sumiu).
+        xsdk_log_write("neutrox: xsdk_launch(%s) falhou: errno %d; saida padrao do sistema", launch.c_str(), errno);
+    }
+    xsdk_log_write("neutrox: encerrado (saida padrao do sistema)");
     return code;
 }

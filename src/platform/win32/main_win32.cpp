@@ -191,6 +191,7 @@ public:
     }
 
     void startAudio(bool mute) {
+        muted_ = mute;
         if (mute) return;
         wave_ = new WaveOutAudio(mixer_);
         if (!wave_->start()) { delete wave_; wave_ = nullptr; }
@@ -332,6 +333,34 @@ public:
 
     SoftRenderer& soft() { return renderer_; }
 
+    std::vector<StorageRoot> storageRoots() override {
+        // Na previa: as unidades do PC, para testar a biblioteca com pastas copiadas do console.
+        std::vector<StorageRoot> out;
+        DWORD mask = GetLogicalDrives();
+        for (int i = 0; i < 26; ++i) {
+            if (!(mask & (1u << i))) continue;
+            char root[4] = {char('A' + i), ':', '\\', 0};
+            UINT type = GetDriveTypeA(root);
+            if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) continue;
+            std::string p = std::string(1, char('A' + i)) + ":/";
+            out.push_back({p, std::string("Unidade ") + char('A' + i) + ": (PC)", ""});
+        }
+        return out;
+    }
+    AudioDeviceStatus audioStatus() override {
+        AudioDeviceStatus s;
+        s.present = true;
+        s.open = wave_ != nullptr;
+        s.detail = wave_ ? "waveOut aberto, 44,1 kHz estéreo" : (muted_ ? "áudio desativado (--mute)" : "waveOutOpen falhou");
+        return s;
+    }
+    UserProfile userProfile() override {
+        UserProfile p;
+        p.supported = false;
+        p.detail = "prévia do Windows: sem perfis do Xbox 360";
+        return p;
+    }
+
 private:
     static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         auto* self = reinterpret_cast<Win32Platform*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -373,6 +402,7 @@ private:
     bool padConnected_[4] = {};
     double nextProbe_[4] = {};
     bool screenshotRequested_ = false;
+    bool muted_ = false;
 };
 
 std::string defaultDataDir() {
@@ -417,6 +447,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
         return 1;
     }
     platform.startAudio(mute);
+    {
+        unsigned hc = std::thread::hardware_concurrency();
+        platform.soft().setThreads(int(hc < 2 ? 1 : (hc > 8 ? 8 : hc)));
+    }
 
     App app(platform);
     if (!app.init()) return 1;

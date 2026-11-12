@@ -2,8 +2,12 @@
 #include "graphics/soft_renderer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
 #include "graphics/font.h"
 
 namespace nx {
@@ -41,19 +45,111 @@ inline float roundRectSdf(float px, float py, float x0, float y0, float x1, floa
 
 }  // namespace
 
+// Pool de threads auxiliares: cada rodada executa 'job(lane)' em todas, inclusive na que chamou.
+struct SoftRenderer::Pool {
+    std::vector<std::thread> threads;
+    std::mutex m;
+    std::condition_variable go, done;
+    unsigned gen = 0;
+    int remaining = 0;
+    bool stop = false;
+    std::function<void(int)> job;
+
+    Pool(int helpers, const std::function<void(int)>& init) {
+        for (int i = 1; i <= helpers; ++i)
+            threads.emplace_back([this, i, init]() {
+                if (init) init(i);
+                unsigned seen = 0;
+                for (;;) {
+                    std::function<void(int)> j;
+                    {
+                        std::unique_lock<std::mutex> lk(m);
+                        go.wait(lk, [&]() { return stop || gen != seen; });
+                        if (stop) return;
+                        seen = gen;
+                        j = job;
+                    }
+                    j(i);
+                    std::lock_guard<std::mutex> lk(m);
+                    if (--remaining == 0) done.notify_one();
+                }
+            });
+    }
+    ~Pool() {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            stop = true;
+        }
+        go.notify_all();
+        for (auto& t : threads) t.join();
+    }
+    void run(const std::function<void(int)>& fn) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            job = fn;
+            remaining = int(threads.size());
+            ++gen;
+        }
+        go.notify_all();
+        fn(0);
+        std::unique_lock<std::mutex> lk(m);
+        done.wait(lk, [&]() { return remaining == 0; });
+    }
+};
+
 SoftRenderer::SoftRenderer(int width, int height) : w_(0), h_(0) { resize(width, height); }
 
+SoftRenderer::SoftRenderer(const SoftRenderer& o, LaneTag) : w_(o.w_), h_(o.h_) {
+    fbp_ = o.fbp_;
+    texs_ = o.texs_;
+    scale_ = o.scale_;
+    ox_ = o.ox_;
+    oy_ = o.oy_;
+    lane_ = true;
+    bandY0_ = 0;
+    bandY1_ = h_;
+}
+
+SoftRenderer::~SoftRenderer() {
+    pool_.reset();
+    if (fontPinned_) StrokeFont::instance().unpin();
+}
+
 void SoftRenderer::resize(int width, int height) {
+    flush();
     w_ = std::max(1, width);
     h_ = std::max(1, height);
     fb_.assign(size_t(w_) * h_, 0xFF000000u);
+    fbp_ = fb_.data();
     scale_ = std::min(float(w_) / kLogicalW, float(h_) / kLogicalH);
     ox_ = std::floor((w_ - kLogicalW * scale_) * 0.5f);
     oy_ = std::floor((h_ - kLogicalH * scale_) * 0.5f);
+    bandY0_ = 0;
+    bandY1_ = h_;
+    lanes_.clear();
     beginFrame();
 }
 
+void SoftRenderer::setThreads(int n, std::function<void(int)> workerInit) {
+    flush();
+    n = std::max(1, std::min(n, 16));
+    if (lane_ || n == threads_) return;
+    pool_.reset();
+    lanes_.clear();
+    threads_ = n;
+    workerInit_ = std::move(workerInit);
+    if (n > 1) pool_.reset(new Pool(n - 1, workerInit_));
+    if (n == 1 && fontPinned_) { StrokeFont::instance().unpin(); fontPinned_ = false; }
+}
+
+void SoftRenderer::ensureLanes() {
+    if (int(lanes_.size()) == threads_) return;
+    lanes_.clear();
+    for (int i = 0; i < threads_; ++i) lanes_.emplace_back(new SoftRenderer(*this, LaneTag{}));
+}
+
 void SoftRenderer::beginFrame() {
+    flush();
     clipStack_.clear();
     alphaStack_.clear();
     offsetStack_.clear();
@@ -62,9 +158,125 @@ void SoftRenderer::beginFrame() {
     clip_ = ClipI{int(ox_), int(oy_), int(std::ceil(ox_ + kLogicalW * scale_)), int(std::ceil(oy_ + kLogicalH * scale_))};
     clip_.x1 = std::min(clip_.x1, w_);
     clip_.y1 = std::min(clip_.y1, h_);
+    if (lane_) return;
+    StrokeFont& f = StrokeFont::instance();
+    if (recording()) {
+        if (fontPinned_) { f.unpin(); fontPinned_ = false; }
+        f.collect();
+        f.pin();  // glifos aquecidos na gravacao ficam validos ate a rasterizacao
+        fontPinned_ = true;
+        batch_ = saveState();
+    } else {
+        f.collect();
+    }
 }
 
-void SoftRenderer::endFrame() {}
+void SoftRenderer::endFrame() { flush(); }
+
+SoftRenderer::State SoftRenderer::saveState() const {
+    State s;
+    s.clip = clip_;
+    s.clipStack = clipStack_;
+    s.alpha = alpha_;
+    s.alphaStack = alphaStack_;
+    s.offX = offX_;
+    s.offY = offY_;
+    s.offsetStack = offsetStack_;
+    return s;
+}
+
+void SoftRenderer::loadState(const State& s, int b0, int b1) {
+    auto band = [&](ClipI c) {
+        c.y0 = std::max(c.y0, b0);
+        c.y1 = std::max(c.y0, std::min(c.y1, b1));
+        return c;
+    };
+    clip_ = band(s.clip);
+    clipStack_.clear();
+    for (const ClipI& c : s.clipStack) clipStack_.push_back(band(c));
+    alpha_ = s.alpha;
+    alphaStack_ = s.alphaStack;
+    offX_ = s.offX;
+    offY_ = s.offY;
+    offsetStack_ = s.offsetStack;
+    bandY0_ = b0;
+    bandY1_ = b1;
+}
+
+SoftRenderer::Cmd& SoftRenderer::rec(Op op, float yl0, float yl1) {
+    cmds_.push_back(Cmd{});
+    Cmd& c = cmds_.back();
+
+    c.op = op;
+    float a = ty(std::min(yl0, yl1)), b = ty(std::max(yl0, yl1));
+    c.yb0 = int(std::floor(a)) - 3;
+    c.yb1 = int(std::ceil(b)) + 3;
+    return c;
+}
+
+SoftRenderer::Cmd& SoftRenderer::recFull(Op op) {
+    Cmd& c = rec(op, 0, 0);
+    c.yb0 = -1000000;
+    c.yb1 = 1000000;
+    return c;
+}
+
+void SoftRenderer::replayFrom(const SoftRenderer& src, int b0, int b1) {
+    for (const Cmd& c : src.cmds_) {
+        if (c.op != Op::PushClip && c.op != Op::PopClip && c.op != Op::PushAlpha && c.op != Op::PopAlpha &&
+            c.op != Op::PushOffset && c.op != Op::PopOffset && (c.yb1 < b0 || c.yb0 >= b1))
+            continue;  // nao toca esta faixa
+        const float* f = c.f;
+        switch (c.op) {
+            case Op::Clear: clear(c.c0); break;
+            case Op::FillRect: fillRect(Rectf{f[0], f[1], f[2], f[3]}, c.c0); break;
+            case Op::FillRoundRect: fillRoundRect(Rectf{f[0], f[1], f[2], f[3]}, f[4], c.c0); break;
+            case Op::GradV: fillGradientV(Rectf{f[0], f[1], f[2], f[3]}, c.c0, c.c1); break;
+            case Op::GradH: fillGradientH(Rectf{f[0], f[1], f[2], f[3]}, c.c0, c.c1); break;
+            case Op::Radial: fillRadial(f[0], f[1], f[2], c.c0, c.c1, Rectf{f[3], f[4], f[5], f[6]}); break;
+            case Op::FillCircle: fillCircle(f[0], f[1], f[2], c.c0); break;
+            case Op::StrokeCircle: strokeCircle(f[0], f[1], f[2], f[3], c.c0); break;
+            case Op::StrokeRect: strokeRect(Rectf{f[0], f[1], f[2], f[3]}, f[4], c.c0); break;
+            case Op::StrokeRoundRect: strokeRoundRect(Rectf{f[0], f[1], f[2], f[3]}, f[4], f[5], c.c0); break;
+            case Op::Line: drawLine(f[0], f[1], f[2], f[3], f[4], c.c0); break;
+            case Op::Convex: fillConvex(src.pts_.data() + c.i0, c.i1, c.c0); break;
+            case Op::Text: drawText(src.text_.c_str() + c.i0, f[0], f[1], src.styles_[size_t(c.i1)]); break;
+            case Op::PushClip: pushClip(Rectf{f[0], f[1], f[2], f[3]}); break;
+            case Op::PopClip: popClip(); break;
+            case Op::PushAlpha: pushAlpha(f[0]); break;
+            case Op::PopAlpha: popAlpha(); break;
+            case Op::PushOffset: pushOffset(f[0], f[1]); break;
+            case Op::PopOffset: popOffset(); break;
+            case Op::DrawTex: drawTexture(c.i0, Rectf{f[0], f[1], f[2], f[3]}, f[4]); break;
+        }
+    }
+}
+
+void SoftRenderer::flush() {
+    if (lane_ || !recording()) return;
+    if (cmds_.empty()) { batch_ = saveState(); return; }
+    ensureLanes();
+    // Faixas: 3 por thread, distribuidas sob demanda (equilibra telas com conteudo
+    // concentrado). A tela inteira (letterbox incluido) e coberta.
+    const int nb = std::min(h_, threads_ * 3);
+    std::atomic<int> next{0};
+    pool_->run([&](int lane) {
+        SoftRenderer& L = *lanes_[size_t(lane)];
+        for (;;) {
+            const int b = next.fetch_add(1);
+            if (b >= nb) break;
+            const int y0 = int(int64_t(h_) * b / nb), y1 = int(int64_t(h_) * (b + 1) / nb);
+            L.loadState(batch_, y0, y1);
+            L.replayFrom(*this, y0, y1);
+        }
+    });
+    lastCmds_ = int(cmds_.size());
+    cmds_.clear();
+    pts_.clear();
+    text_.clear();
+    styles_.clear();
+    batch_ = saveState();
+}
 
 uint32_t SoftRenderer::effAlpha(uint8_t a) const { return uint32_t(a * alpha_ + 0.5f); }
 
@@ -73,26 +285,42 @@ void SoftRenderer::blendSpan(int y, int x0, int x1, Color c, uint32_t alpha) {
     x0 = std::max(x0, clip_.x0);
     x1 = std::min(x1, clip_.x1);
     if (x0 >= x1 || alpha == 0) return;
-    uint32_t* row = fb_.data() + size_t(y) * w_;
+    uint32_t* row = fbp_ + size_t(y) * w_;
     if (alpha >= 255) {
         std::fill(row + x0, row + x1, 0xFF000000u | (uint32_t(c.r) << 16) | (uint32_t(c.g) << 8) | c.b);
         return;
     }
-    for (int x = x0; x < x1; ++x) blendRaw(row[x], c.r, c.g, c.b, alpha);
+    // Cor constante: vermelho e azul juntos numa palavra (mesmo resultado de blendRaw).
+    const uint32_t ia = 255 - alpha;
+    const uint32_t srb = ((uint32_t(c.r) << 16) | c.b) * alpha, sg = uint32_t(c.g) * alpha;
+    for (int x = x0; x < x1; ++x) {
+        const uint32_t d = row[x];
+        uint32_t rb = (d & 0x00FF00FFu) * ia + srb;
+        rb = ((rb + 0x00010001u + ((rb >> 8) & 0x00FF00FFu)) >> 8) & 0x00FF00FFu;
+        const uint32_t g = div255(((d >> 8) & 0xFFu) * ia + sg);
+        row[x] = 0xFF000000u | rb | (g << 8);
+    }
 }
 
 void SoftRenderer::blendPixel(int x, int y, Color c, uint32_t alpha) {
     if (x < clip_.x0 || x >= clip_.x1 || y < clip_.y0 || y >= clip_.y1 || alpha == 0) return;
-    blendRaw(fb_[size_t(y) * w_ + x], c.r, c.g, c.b, alpha);
+    blendRaw(fbp_[size_t(y) * w_ + x], c.r, c.g, c.b, alpha);
 }
 
 void SoftRenderer::clear(Color c) {
-    // Limpa a tela inteira (inclusive letterbox) com preto e a area util com a cor.
-    std::fill(fb_.begin(), fb_.end(), 0xFF000000u);
+    if (recording()) { recFull(Op::Clear).c0 = c; return; }
+    // Limpa a tela inteira (inclusive letterbox) com preto e a area util com a cor
+    // (numa faixa paralela, so as linhas da faixa).
+    std::fill(fbp_ + size_t(bandY0_) * w_, fbp_ + size_t(bandY1_) * w_, 0xFF000000u);
     for (int y = clip_.y0; y < clip_.y1; ++y) blendSpan(y, clip_.x0, clip_.x1, c, 255);
 }
 
 void SoftRenderer::fillRect(const Rectf& r, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::FillRect, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.c0 = c;
+        return;
+    }
     uint32_t a = effAlpha(c.a);
     if (!a || r.w <= 0 || r.h <= 0) return;
     int x0 = int(std::lround(tx(r.x))), x1 = int(std::lround(tx(r.right())));
@@ -103,6 +331,11 @@ void SoftRenderer::fillRect(const Rectf& r, Color c) {
 }
 
 void SoftRenderer::fillRoundRect(const Rectf& r, float radius, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::FillRoundRect, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.f[4] = radius; k.c0 = c;
+        return;
+    }
     uint32_t a = effAlpha(c.a);
     if (!a || r.w <= 0 || r.h <= 0) return;
     float fx0 = tx(r.x), fy0 = ty(r.y), fx1 = tx(r.right()), fy1 = ty(r.bottom());
@@ -125,12 +358,34 @@ void SoftRenderer::fillRoundRect(const Rectf& r, float radius, Color c) {
             float cov = clampf(0.5f - sd, 0, 1);
             blendPixel(x, y, c, uint32_t(a * cov + 0.5f));
         };
-        for (int x = ix0; x < std::min(mx0, ix1); ++x) edge(x);
-        for (int x = std::max(mx1, ix0); x < ix1; ++x) if (x >= mx0) edge(x);
+        // Colunas dos cantos: a parte com distancia <= -0.5 tem cobertura 1 exata
+        // (solida); a SDF (com raiz) so roda nos pixels da borda.
+        int sL = ix1, sR = ix0;
+        const float hs = (rr - 0.5f) * (rr - 0.5f) - dy * dy;
+        if (rr >= 0.5f && hs > 0) {
+            const float sq = std::sqrt(hs);
+            sL = int(std::ceil(fx0 + rr - sq - 0.5f)) + 1;   // +1/-1: margem contra arredondamento
+            sR = int(std::floor(fx1 - rr + sq - 0.5f));
+        }
+        const int lEnd = std::min(mx0, ix1);
+        int x = ix0;
+        for (; x < lEnd && x < sL; ++x) edge(x);
+        const int lSolid = std::min(lEnd, sR);
+        if (x < lSolid) { blendSpan(y, x, lSolid, c, a); x = lSolid; }
+        for (; x < lEnd; ++x) edge(x);
+        x = std::max(std::max(mx1, ix0), mx0);
+        const int rSolid = std::min(ix1, sR);
+        if (x >= sL && x < rSolid) { blendSpan(y, x, rSolid, c, a); x = rSolid; }
+        for (; x < ix1; ++x) edge(x);
     }
 }
 
 void SoftRenderer::fillGradientV(const Rectf& r, Color top, Color bottom) {
+    if (recording()) {
+        Cmd& k = rec(Op::GradV, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.c0 = top; k.c1 = bottom;
+        return;
+    }
     if (r.w <= 0 || r.h <= 0) return;
     int x0 = int(std::lround(tx(r.x))), x1 = int(std::lround(tx(r.right())));
     float fy0 = ty(r.y), fy1 = ty(r.bottom());
@@ -143,6 +398,11 @@ void SoftRenderer::fillGradientV(const Rectf& r, Color top, Color bottom) {
 }
 
 void SoftRenderer::fillGradientH(const Rectf& r, Color left, Color right) {
+    if (recording()) {
+        Cmd& k = rec(Op::GradH, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.c0 = left; k.c1 = right;
+        return;
+    }
     if (r.w <= 0 || r.h <= 0) return;
     float fx0 = tx(r.x), fx1 = tx(r.right());
     int x0 = std::max(int(std::lround(fx0)), clip_.x0), x1 = std::min(int(std::lround(fx1)), clip_.x1);
@@ -152,7 +412,7 @@ void SoftRenderer::fillGradientH(const Rectf& r, Color left, Color right) {
     std::vector<Color> cols(size_t(x1 - x0));
     for (int x = x0; x < x1; ++x) cols[size_t(x - x0)] = lerpColor(left, right, (x + 0.5f - fx0) / span);
     for (int y = y0; y < y1; ++y) {
-        uint32_t* row = fb_.data() + size_t(y) * w_;
+        uint32_t* row = fbp_ + size_t(y) * w_;
         for (int x = x0; x < x1; ++x) {
             const Color& c = cols[size_t(x - x0)];
             blendRaw(row[x], c.r, c.g, c.b, effAlpha(c.a));
@@ -161,6 +421,12 @@ void SoftRenderer::fillGradientH(const Rectf& r, Color left, Color right) {
 }
 
 void SoftRenderer::fillRadial(float cx, float cy, float radius, Color inner, Color outer, const Rectf& area) {
+    if (recording()) {
+        Cmd& k = rec(Op::Radial, area.y, area.bottom());
+        k.f[0] = cx; k.f[1] = cy; k.f[2] = radius; k.f[3] = area.x; k.f[4] = area.y; k.f[5] = area.w; k.f[6] = area.h;
+        k.c0 = inner; k.c1 = outer;
+        return;
+    }
     float pcx = tx(cx), pcy = ty(cy), pr = std::max(1.0f, radius * scale_);
     int x0 = std::max(int(std::floor(tx(area.x))), clip_.x0), x1 = std::min(int(std::ceil(tx(area.right()))), clip_.x1);
     int y0 = std::max(int(std::floor(ty(area.y))), clip_.y0), y1 = std::min(int(std::ceil(ty(area.bottom()))), clip_.y1);
@@ -177,7 +443,7 @@ void SoftRenderer::fillRadial(float cx, float cy, float radius, Color inner, Col
     const Entry& out = lut[kLut];
     const float r2 = pr * pr, inv = kLut / r2;
     for (int y = y0; y < y1; ++y) {
-        uint32_t* row = fb_.data() + size_t(y) * w_;
+        uint32_t* row = fbp_ + size_t(y) * w_;
         float dy = (y + 0.5f - pcy);
         float dy2 = dy * dy;
         // Faixa da linha dentro do raio; fora dela a cor e constante (outer).
@@ -201,6 +467,11 @@ void SoftRenderer::fillRadial(float cx, float cy, float radius, Color inner, Col
 }
 
 void SoftRenderer::fillCircle(float cx, float cy, float radius, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::FillCircle, cy - radius - 2, cy + radius + 2);
+        k.f[0] = cx; k.f[1] = cy; k.f[2] = radius; k.c0 = c;
+        return;
+    }
     uint32_t a = effAlpha(c.a);
     if (!a || radius <= 0) return;
     float pcx = tx(cx), pcy = ty(cy), pr = radius * scale_;
@@ -224,6 +495,11 @@ void SoftRenderer::fillCircle(float cx, float cy, float radius, Color c) {
 }
 
 void SoftRenderer::strokeCircle(float cx, float cy, float radius, float thickness, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::StrokeCircle, cy - radius - thickness - 2, cy + radius + thickness + 2);
+        k.f[0] = cx; k.f[1] = cy; k.f[2] = radius; k.f[3] = thickness; k.c0 = c;
+        return;
+    }
     uint32_t a = effAlpha(c.a);
     if (!a) return;
     float pcx = tx(cx), pcy = ty(cy), pr = radius * scale_, ht = thickness * scale_ * 0.5f;
@@ -245,12 +521,17 @@ void SoftRenderer::strokeCircle(float cx, float cy, float radius, float thicknes
             float dx = x + 0.5f - pcx;
             float d = std::sqrt(dx * dx + dy * dy);
             float cov = clampf(ht - std::fabs(d - pr) + 0.5f, 0, 1);
-            if (cov > 0) blendRaw(fb_[size_t(y) * w_ + x], c.r, c.g, c.b, uint32_t(a * cov + 0.5f));
+            if (cov > 0) blendRaw(fbp_[size_t(y) * w_ + x], c.r, c.g, c.b, uint32_t(a * cov + 0.5f));
         }
     }
 }
 
 void SoftRenderer::strokeRect(const Rectf& r, float t, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::StrokeRect, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.f[4] = t; k.c0 = c;
+        return;
+    }
     fillRect(Rectf{r.x, r.y, r.w, t}, c);
     fillRect(Rectf{r.x, r.bottom() - t, r.w, t}, c);
     fillRect(Rectf{r.x, r.y + t, t, r.h - 2 * t}, c);
@@ -258,6 +539,11 @@ void SoftRenderer::strokeRect(const Rectf& r, float t, Color c) {
 }
 
 void SoftRenderer::strokeRoundRect(const Rectf& r, float radius, float thickness, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::StrokeRoundRect, r.y, r.bottom());
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h; k.f[4] = radius; k.f[5] = thickness; k.c0 = c;
+        return;
+    }
     uint32_t a = effAlpha(c.a);
     if (!a || r.w <= 0 || r.h <= 0) return;
     float fx0 = tx(r.x), fy0 = ty(r.y), fx1 = tx(r.right()), fy1 = ty(r.bottom());
@@ -277,12 +563,17 @@ void SoftRenderer::strokeRoundRect(const Rectf& r, float radius, float thickness
             if (straight && xc > ix0 + band && xc < ix1 - band) { x = std::max(x, int(ix1 - band) - 1); continue; }
             float sd = roundRectSdf(xc, yc, ix0, iy0, ix1, iy1, ir);
             float cov = clampf(ht - std::fabs(sd) + 0.5f, 0, 1);
-            if (cov > 0) blendRaw(fb_[size_t(y) * w_ + x], c.r, c.g, c.b, uint32_t(a * cov + 0.5f));
+            if (cov > 0) blendRaw(fbp_[size_t(y) * w_ + x], c.r, c.g, c.b, uint32_t(a * cov + 0.5f));
         }
     }
 }
 
 void SoftRenderer::drawLine(float x0, float y0, float x1, float y1, float thickness, Color c) {
+    if (recording()) {
+        Cmd& k = rec(Op::Line, std::min(y0, y1) - thickness - 2, std::max(y0, y1) + thickness + 2);
+        k.f[0] = x0; k.f[1] = y0; k.f[2] = x1; k.f[3] = y1; k.f[4] = thickness; k.c0 = c;
+        return;
+    }
     float dx = x1 - x0, dy = y1 - y0;
     float len = std::sqrt(dx * dx + dy * dy);
     if (len < 1e-4f) { fillCircle(x0, y0, thickness * 0.5f, c); return; }
@@ -293,6 +584,16 @@ void SoftRenderer::drawLine(float x0, float y0, float x1, float y1, float thickn
 
 void SoftRenderer::fillConvex(const Vec2* pts, int count, Color c) {
     if (count < 3) return;
+    if (recording()) {
+        float y0 = pts[0].y, y1 = pts[0].y;
+        for (int i = 1; i < count; ++i) { y0 = std::min(y0, pts[i].y); y1 = std::max(y1, pts[i].y); }
+        Cmd& k = rec(Op::Convex, y0 - 2, y1 + 2);
+        k.i0 = int(pts_.size());
+        k.i1 = count;
+        k.c0 = c;
+        pts_.insert(pts_.end(), pts, pts + count);
+        return;
+    }
     std::vector<Vec2> dev(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) dev[size_t(i)] = Vec2{tx(pts[i].x), ty(pts[i].y)};
     convexDevice(dev.data(), count, c);
@@ -384,6 +685,20 @@ void SoftRenderer::drawText(const char* utf8, float x, float y, const TextStyle&
     uint32_t baseA = effAlpha(st.color.a);
     if (!baseA) return;
     StrokeFont& f = StrokeFont::instance();
+    if (recording()) {
+        // Aquece os glifos agora (thread unica); as faixas so os consultam.
+        const float devSize = st.size * scale_;
+        for (const char* q = utf8; uint32_t cp = utf8Next(q);) (void)f.glyph(cp, devSize, st.weight);
+        Cmd& k = st.rotated90 ? recFull(Op::Text) : rec(Op::Text, y - st.size * 0.6f, y + st.size * 2.0f);
+        k.f[0] = x;
+        k.f[1] = y;
+        k.i0 = int(text_.size());
+        k.i1 = int(styles_.size());
+        text_.append(utf8);
+        text_.push_back('\0');
+        styles_.push_back(st);
+        return;
+    }
     float width = measureText(utf8, st);
     if (st.align == Align::Center) (st.rotated90 ? y : x) -= width * 0.5f;
     else if (st.align == Align::Right) (st.rotated90 ? y : x) -= width;
@@ -393,7 +708,10 @@ void SoftRenderer::drawText(const char* utf8, float x, float y, const TextStyle&
     const char* p = utf8;
     const Color c = st.color;
     while (uint32_t cp = utf8Next(p)) {
-        const GlyphBitmap& g = f.glyph(cp, devSize, st.weight);
+        // Numa faixa paralela o cache so e lido (os glifos foram aquecidos na gravacao).
+        const GlyphBitmap* gp = lane_ ? f.findGlyph(cp, devSize, st.weight) : &f.glyph(cp, devSize, st.weight);
+        if (!gp) continue;
+        const GlyphBitmap& g = *gp;
         int gx = int(std::lround(penX)), gy = int(std::lround(penY));
         if (!g.alpha.empty()) {
             if (!st.rotated90) {
@@ -401,7 +719,7 @@ void SoftRenderer::drawText(const char* utf8, float x, float y, const TextStyle&
                 for (int j = 0; j < g.h; ++j) {
                     int yy = by + j;
                     if (yy < clip_.y0 || yy >= clip_.y1) continue;
-                    uint32_t* row = fb_.data() + size_t(yy) * w_;
+                    uint32_t* row = fbp_ + size_t(yy) * w_;
                     const uint8_t* src = g.alpha.data() + size_t(j) * g.w;
                     int i0 = std::max(0, clip_.x0 - bx), i1 = std::min(g.w, clip_.x1 - bx);
                     for (int i = i0; i < i1; ++i) {
@@ -420,7 +738,7 @@ void SoftRenderer::drawText(const char* utf8, float x, float y, const TextStyle&
                         if (!src[i]) continue;
                         int yy = gy + g.offsetX + i;
                         if (yy < clip_.y0 || yy >= clip_.y1) continue;
-                        blendRaw(fb_[size_t(yy) * w_ + xx], c.r, c.g, c.b, div255(src[i] * baseA));
+                        blendRaw(fbp_[size_t(yy) * w_ + xx], c.r, c.g, c.b, div255(src[i] * baseA));
                     }
                 }
             }
@@ -431,6 +749,10 @@ void SoftRenderer::drawText(const char* utf8, float x, float y, const TextStyle&
 }
 
 void SoftRenderer::pushClip(const Rectf& r) {
+    if (recording()) {
+        Cmd& k = recFull(Op::PushClip);
+        k.f[0] = r.x; k.f[1] = r.y; k.f[2] = r.w; k.f[3] = r.h;
+    }
     clipStack_.push_back(clip_);
     ClipI n{int(std::floor(tx(r.x))), int(std::floor(ty(r.y))), int(std::ceil(tx(r.right()))), int(std::ceil(ty(r.bottom())))};
     clip_.x0 = std::max(clip_.x0, n.x0);
@@ -440,29 +762,38 @@ void SoftRenderer::pushClip(const Rectf& r) {
 }
 
 void SoftRenderer::popClip() {
+    if (recording()) recFull(Op::PopClip);
     if (clipStack_.empty()) return;
     clip_ = clipStack_.back();
     clipStack_.pop_back();
 }
 
 void SoftRenderer::pushAlpha(float a) {
+    if (recording()) recFull(Op::PushAlpha).f[0] = a;
     alphaStack_.push_back(alpha_);
     alpha_ *= clampf(a, 0, 1);
 }
 
 void SoftRenderer::popAlpha() {
+    if (recording()) recFull(Op::PopAlpha);
     if (alphaStack_.empty()) return;
     alpha_ = alphaStack_.back();
     alphaStack_.pop_back();
 }
 
 void SoftRenderer::pushOffset(float dx, float dy) {
+    if (recording()) {
+        Cmd& k = recFull(Op::PushOffset);
+        k.f[0] = dx;
+        k.f[1] = dy;
+    }
     offsetStack_.push_back(Vec2{offX_, offY_});
     offX_ += dx;
     offY_ += dy;
 }
 
 void SoftRenderer::popOffset() {
+    if (recording()) recFull(Op::PopOffset);
     if (offsetStack_.empty()) return;
     offX_ = offsetStack_.back().x;
     offY_ = offsetStack_.back().y;
@@ -478,23 +809,28 @@ TextureId SoftRenderer::createTexture(int w, int h, const uint32_t* argb) {
     for (uint32_t v : t.px)
         if ((v >> 24) != 0xFF) { t.opaque = false; break; }
     TextureId id = nextTex_++;
-    textures_.emplace(id, std::move(t));
+    tex().emplace(id, std::move(t));
     return id;
 }
 
-void SoftRenderer::destroyTexture(TextureId id) { textures_.erase(id); }
+void SoftRenderer::destroyTexture(TextureId id) {
+    flush();  // um comando pendente pode desenhar esta textura
+    tex().erase(id);
+}
 
 bool SoftRenderer::captureTexture(TextureId id) {
-    auto it = textures_.find(id);
-    if (it == textures_.end() || it->second.w != w_ || it->second.h != h_) return false;
-    std::memcpy(it->second.px.data(), fb_.data(), fb_.size() * sizeof(uint32_t));
+    flush();
+    auto it = tex().find(id);
+    if (it == tex().end() || it->second.w != w_ || it->second.h != h_) return false;
+    std::memcpy(it->second.px.data(), fbp_, size_t(w_) * h_ * sizeof(uint32_t));
     it->second.opaque = true;  // o framebuffer e sempre opaco
     return true;
 }
 
 bool SoftRenderer::updateTexture(TextureId id, int w, int h, const uint32_t* argb) {
-    auto it = textures_.find(id);
-    if (it == textures_.end() || !argb || it->second.w != w || it->second.h != h) return false;
+    flush();
+    auto it = tex().find(id);
+    if (it == tex().end() || !argb || it->second.w != w || it->second.h != h) return false;
     Texture& t = it->second;
     std::memcpy(t.px.data(), argb, size_t(w) * h * sizeof(uint32_t));
     t.opaque = true;
@@ -505,13 +841,18 @@ bool SoftRenderer::updateTexture(TextureId id, int w, int h, const uint32_t* arg
 
 size_t SoftRenderer::textureBytes() const {
     size_t total = 0;
-    for (const auto& kv : textures_) total += kv.second.px.size() * sizeof(uint32_t);
+    for (const auto& kv : tex()) total += kv.second.px.size() * sizeof(uint32_t);
     return total;
 }
 
 void SoftRenderer::drawTexture(TextureId id, const Rectf& dst, float alpha) {
-    auto it = textures_.find(id);
-    if (it == textures_.end()) return;
+    if (recording()) {
+        Cmd& k = rec(Op::DrawTex, dst.y, dst.bottom());
+        k.f[0] = dst.x; k.f[1] = dst.y; k.f[2] = dst.w; k.f[3] = dst.h; k.f[4] = alpha; k.i0 = id;
+        return;
+    }
+    auto it = tex().find(id);
+    if (it == tex().end()) return;
     const Texture& t = it->second;
     float fx0 = tx(dst.x), fy0 = ty(dst.y), fx1 = tx(dst.right()), fy1 = ty(dst.bottom());
     int x0 = int(std::lround(fx0)), y0 = int(std::lround(fy0)), x1 = int(std::lround(fx1)), y1 = int(std::lround(fy1));
@@ -526,7 +867,7 @@ void SoftRenderer::drawTexture(TextureId id, const Rectf& dst, float alpha) {
     // Caminho rapido: copia 1:1 opaca.
     if (dw == t.w && dh == t.h && t.opaque && ga >= 255) {
         for (int y = cy0; y < cy1; ++y)
-            std::memcpy(fb_.data() + size_t(y) * w_ + cx0, t.px.data() + size_t(y - y0) * t.w + (cx0 - x0), size_t(cx1 - cx0) * 4);
+            std::memcpy(fbp_ + size_t(y) * w_ + cx0, t.px.data() + size_t(y - y0) * t.w + (cx0 - x0), size_t(cx1 - cx0) * 4);
         return;
     }
     // Amostragem bilinear em ponto fixo 16.16.
@@ -539,7 +880,7 @@ void SoftRenderer::drawTexture(TextureId id, const Rectf& dst, float alpha) {
         if (ty0 >= t.h) { ty0 = ty1 = t.h - 1; fy = 0; }
         const uint32_t* r0 = t.px.data() + size_t(ty0) * t.w;
         const uint32_t* r1 = t.px.data() + size_t(ty1) * t.w;
-        uint32_t* out = fb_.data() + size_t(y) * w_;
+        uint32_t* out = fbp_ + size_t(y) * w_;
         for (int x = cx0; x < cx1; ++x) {
             int64_t sx = (x - x0) * stepX + stepX / 2 - 32768;
             if (sx < 0) sx = 0;

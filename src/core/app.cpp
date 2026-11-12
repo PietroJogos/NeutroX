@@ -2,9 +2,13 @@
 #include "core/app.h"
 
 #include <cstdio>
+#include <ctime>
 #include <exception>
 #include <filesystem>
+#include "core/fsutil.h"
 #include "core/log.h"
+#include "dashboards/common/demo_content.h"
+#include "library/title_meta.h"
 #include "graphics/font.h"
 #include "graphics/soft_renderer.h"
 #include "graphics/ui.h"
@@ -52,6 +56,28 @@ bool App::init() {
     }
     applySettings();
     reloadOriginalSounds();
+    {
+        AudioDeviceStatus as = platform_.audioStatus();
+        logInfo("Audio: %s (%s)", as.present ? (as.open ? "dispositivo aberto" : "dispositivo FECHADO") : "sem dispositivo",
+                as.detail.c_str());
+        static const char* const kSrc[] = {"originais", "recriados", "originais + recriados nos ausentes"};
+        logInfo("Fonte dos sons dos dashboards: %s", kSrc[settings_.dashboardSounds]);
+    }
+    refreshProfile();
+    for (const StorageRoot& r : storageRoots()) logInfo("Unidade: %s (%s)", r.label.c_str(), r.path.c_str());
+    // Biblioteca de jogos reais
+    {
+        const std::string base = platform_.dataPath();
+        if (lib_.load(base + "biblioteca.ini"))
+            logInfo("Biblioteca: %d titulos, %d pastas monitoradas", int(lib_.games().size()), int(lib_.folders().size()));
+        else
+            logInfo("Biblioteca vazia (sem biblioteca.ini); adicione pastas em Configuracoes > Jogos");
+        coverSvc_.setDirs(base + "capas/", base + "capas_importar/");
+        coverTex_.setDir(base + "capas/");
+        lib_.refreshAvailability();
+        if (lib_.options().scanOnStart && !lib_.folders().empty()) startLibraryScan(false);
+        publishLibrary();
+    }
     buildPreviews();
     stack_.push_back(createBootScreen());
     stack_.back()->onEnter(ctx_);
@@ -63,6 +89,20 @@ bool App::init() {
 
 void App::shutdown() {
     if (!initialized_) return;
+    logTimings();
+    scanner_.cancel();
+    coverSvc_.stop();
+    saveLibrary(true);
+    coverTex_.releaseAll(*ctx_.renderer);
+    if (ctx_.audio) {
+        MixerStats ms = ctx_.audio->stats();
+        AudioDeviceStatus as = platform_.audioStatus();
+        logInfo("Audio ao sair: pedidos %llu, tocados %llu, mudos (original ausente) %llu, mudos (nao carregado) %llu, "
+                "recriados no lugar %llu, pico %d; saida: %llu quadros entregues, %llu de silencio por atraso",
+                (unsigned long long)ms.requests, (unsigned long long)ms.started, (unsigned long long)ms.mutedMissing,
+                (unsigned long long)ms.mutedNotResident, (unsigned long long)ms.recreatedFallback, ms.peak,
+                (unsigned long long)as.framesPlayed, (unsigned long long)as.framesSilent);
+    }
     clearStack();
     pending_.clear();
     releasePreviews();
@@ -110,7 +150,9 @@ void App::applySettings() {
     animConfig().speed = settings_.animSpeed();
     if (ctx_.audio) {
         ctx_.audio->setVolume(settings_.sfxVolume / 100.0f);
-        ctx_.audio->setSource(settings_.dashboardSounds == 1 ? SoundSource::Recreated : SoundSource::Originals);
+        ctx_.audio->setSource(settings_.dashboardSounds == 1   ? SoundSource::Recreated
+                              : settings_.dashboardSounds == 2 ? SoundSource::OriginalsWithRecreated
+                                                               : SoundSource::Originals);
     }
 }
 
@@ -264,6 +306,9 @@ void App::beginTransition(std::function<void()> action, bool loading, DashboardI
 void App::openDashboard(DashboardId id) {
     ctx_.sfx(Sfx::Switch);
     beginTransition([this, id]() {
+        // Cada interface mostra um retrato fixo da biblioteca enquanto estiver aberta.
+        publishLibrary();
+        lastDash_ = id;
         // 1) descarrega a interface anterior (e quaisquer telas acima dela)
         clearStack();
         // 2) cria e carrega a nova
@@ -296,11 +341,20 @@ void App::openDashboard(DashboardId id) {
         const SoundTheme theme = soundThemeFor(id);
         ctx_.audio->setTheme(theme);
         ctx_.audio->play(Sfx::Startup, 1.0f, 1.0f);
-        if (settings_.dashboardSounds == 0) {
-            int n = ctx_.audio->originalsReport().loaded(theme);
-            if (n < kSfxCount)
-                toast("Sons originais do " + std::string(info.name) + ": " + std::to_string(n) + " de " +
-                      std::to_string(kSfxCount) + " encontrados (veja Configurações)");
+        if (settings_.dashboardSounds != 1) {
+            OrigReport rep = ctx_.audio->originalsReport();
+            int n = rep.loaded(theme);
+            logInfo("Sons de %s: %d de %d originais carregados de %s%s", info.name, n, kSfxCount, rep.baseDir.c_str(),
+                    soundThemeInfo(theme).folder);
+            if (n < kSfxCount) {
+                if (settings_.dashboardSounds == 0)
+                    toast(n == 0 ? std::string(info.name) + ": nenhum som original em local_audio; efeitos mudos (Configurações > Sons)"
+                                 : std::string(info.name) + ": " + std::to_string(n) + " de " + std::to_string(kSfxCount) +
+                                       " sons originais; os ausentes ficam mudos");
+                else
+                    toast(std::string(info.name) + ": " + std::to_string(n) + " originais + " + std::to_string(kSfxCount - n) +
+                          " recriados");
+            }
         }
         logInfo("Dashboard %s carregado; texturas: %d (%u KB)", info.key, ctx_.renderer->textureCount(),
                 unsigned(ctx_.renderer->textureBytes() / 1024));
@@ -320,6 +374,259 @@ void App::openSettings() { push(createSettingsScreen()); }
 void App::openAbout() { push(createAboutScreen()); }
 
 void App::requestQuit() { quit_ = true; }
+
+std::vector<StorageRoot> App::storageRoots() { return platform_.storageRoots(); }
+
+const std::vector<StorageRoot>& App::storageRootsCached() {
+    if (ctx_.time - rootsAt_ > 5.0 || ctx_.time < rootsAt_) {
+        rootsCache_ = platform_.storageRoots();
+        rootsAt_ = ctx_.time;
+    }
+    return rootsCache_;
+}
+
+LaunchTarget App::exitTargetInfo(ExitTarget t) {
+    LaunchTarget lt;
+    if (t == ExitTarget::Default) {
+        lt.found = true;
+        lt.source = "saída padrão do sistema";
+        return lt;
+    }
+    if (!platform_.canLaunchTitles()) {
+        lt.reason = "disponível somente no Xbox 360 (na prévia, a janela é fechada)";
+        return lt;
+    }
+    if (t == ExitTarget::Aurora) return findAurora(platform_.storageRoots(), settings_.auroraPath);
+    const std::string dash = platform_.systemDashboardPath();
+    if (!dash.empty() && fileExists(dash)) {
+        lt.found = true;
+        lt.path = dash;
+        lt.source = "dashboard oficial do console";
+    } else {
+        lt.reason = dash.empty() ? "caminho do dashboard oficial desconhecido" : "dash.xex não encontrado em " + dash;
+    }
+    return lt;
+}
+
+bool App::requestExitTo(ExitTarget t, std::string* why) {
+    if (!platform_.canLaunchTitles()) {
+        // Previa do Windows: qualquer destino apenas fecha a janela.
+        launchOnExit_.clear();
+        quit_ = true;
+        return true;
+    }
+    LaunchTarget lt = exitTargetInfo(t);
+    if (!lt.found) {
+        if (why) *why = lt.reason;
+        logWarn("Saida: destino indisponivel (%s)", lt.reason.c_str());
+        return false;
+    }
+    launchOnExit_ = lt.path;
+    logInfo("Saida pedida: %s (%s)", lt.path.empty() ? "padrao do sistema" : lt.path.c_str(), lt.source.c_str());
+    quit_ = true;
+    return true;
+}
+
+bool App::requestLaunchTitle(const std::string& path, std::string* why) {
+    if (!platform_.canLaunchTitles()) {
+        if (why) *why = "a prévia do Windows não executa títulos do Xbox 360";
+        return false;
+    }
+    if (!fileExists(path)) {
+        if (why) *why = "arquivo não encontrado: " + path;
+        return false;
+    }
+    launchOnExit_ = path;
+    logInfo("Iniciar titulo: %s", path.c_str());
+    quit_ = true;
+    return true;
+}
+
+void App::refreshProfile() {
+    UserProfile p = platform_.userProfile();
+    if (p.signedIn != profile_.signedIn || p.gamertag != profile_.gamertag || p.xuid != profile_.xuid ||
+        p.supported != profile_.supported) {
+        ++profileVersion_;
+        if (p.supported)
+            logInfo("Perfil: %s", p.signedIn ? (p.gamertag + " (usuario " + std::to_string(p.userIndex) + ")").c_str()
+                                             : "nenhum perfil conectado");
+        if (initialized_ && p.supported && p.signedIn && profile_.signedIn) toast("Perfil alterado: " + p.gamertag);
+        else if (initialized_ && p.supported && p.signedIn) toast("Perfil conectado: " + p.gamertag);
+    }
+    profile_ = p;
+    publishProfile(p.supported, p.signedIn, p.gamertag);
+}
+
+void App::checkAudioDiagnostics() {
+    if (!ctx_.audio) return;
+    MixerStats ms = ctx_.audio->stats();
+    OrigReport rep;
+    bool haveRep = false;
+    for (int t = 1; t < kSoundThemeCount; ++t) {
+        uint32_t fresh = ms.mutedMask[t] & ~loggedMutes_[t];
+        if (!fresh) continue;
+        if (!haveRep) { rep = ctx_.audio->originalsReport(); haveRep = true; }
+        for (int s = 0; s < kSfxCount; ++s)
+            if (fresh & (1u << s))
+                logWarn("Som mudo: %s/%s - %s", soundThemeInfo(SoundTheme(t)).folder, sfxFileName(Sfx(s)),
+                        rep.e[t][s].status == OrigStatus::Loaded ? "conjunto ainda nao carregado" : rep.e[t][s].reason.c_str());
+        loggedMutes_[t] |= fresh;
+    }
+}
+
+// ------------------------------------------------------------ biblioteca
+
+void App::publishLibrary() {
+    std::vector<const GameEntry*> v;
+    for (int i : lib_.view(Library::Filter::All)) v.push_back(&lib_.games()[size_t(i)]);
+    publishLibraryGames(v);
+}
+
+DashboardId App::libraryStyle() const {
+    if (activeDash_ != DashboardId::Count) return activeDash_;
+    if (lastDash_ != DashboardId::Count) return lastDash_;
+    if (const DashboardInfo* d = findDashboard(settings_.defaultDashboard)) return d->id;
+    return DashboardId::Count;
+}
+
+void App::saveLibrary(bool force) {
+    if (!lib_.dirty()) return;
+    if (!force && libSaveTimer_ < 2.0f) return;  // agrupa gravacoes (evita escrever a cada tecla)
+    libSaveTimer_ = 0;
+    const std::string path = platform_.dataPath() + "biblioteca.ini";
+    if (!lib_.save(path)) logError("Falha ao salvar a biblioteca em %s", path.c_str());
+}
+
+bool App::startLibraryScan(bool manual) {
+    if (lib_.folders().empty()) {
+        if (manual) toast("Nenhuma pasta de jogos configurada (Configurações > Jogos > Gerenciar pastas)");
+        return false;
+    }
+    if (!scanner_.start(lib_.folders(), lib_.options())) return false;
+    scanManual_ = manual;
+    logInfo("Biblioteca: busca iniciada em %d pastas", int(lib_.folders().size()));
+    return true;
+}
+
+void App::requestCover(const std::string& gameId, bool force, bool manual) {
+    GameEntry* g = lib_.find(gameId);
+    if (!g) return;
+    coverSvc_.request(g->id, g->titleId, force, manual);
+}
+
+int App::importCovers() {
+    std::vector<std::string> notes;
+    auto got = coverSvc_.importFolder(&notes);
+    int applied = 0;
+    for (auto& tf : got)
+        for (GameEntry& g : lib_.games())
+            if (g.titleId == tf.first) {
+                coverTex_.invalidate(*ctx_.renderer, g.cover);
+                g.cover = tf.second;
+                g.coverSource = 2;
+                ++applied;
+            }
+    for (const std::string& n : notes) logWarn("Capa importada recusada: %s", n.c_str());
+    if (applied) lib_.markDirty();
+    logInfo("Capas importadas: %d arquivos validos, %d aplicados, %d recusados", int(got.size()), applied, int(notes.size()));
+    return applied;
+}
+
+bool App::launchGame(const std::string& gameId, std::string* why) {
+    GameEntry* g = lib_.find(gameId);
+    if (!g) { if (why) *why = "jogo não encontrado na biblioteca"; return false; }
+    // Valida de novo o caminho e o tipo antes de encerrar qualquer coisa.
+    GameEntry probe;
+    LibraryOptions all;
+    all.typeXex = all.typeGod = all.typeXbla = all.typeApps = true;
+    std::string w;
+    if (!fileExists(g->path)) {
+        g->available = false;
+        lib_.markDirty();
+        if (why) *why = "o arquivo não existe mais: " + g->path;
+        return false;
+    }
+    if (!Library::probeFile(g->path, all, probe, &w)) { if (why) *why = "título inválido: " + w; return false; }
+    if (probe.titleId != g->titleId) { if (why) *why = "o arquivo mudou (Title ID diferente); atualize a biblioteca"; return false; }
+    if ((g->kind == GameKind::God || g->kind == GameKind::Xbla) && !lib_.options().launchPackages) {
+        if (why)
+            *why = "iniciar pacotes GOD/XBLA está desativado (experimental, não verificado no console); "
+                   "ative em Configurações > Jogos";
+        return false;
+    }
+    if (!platform_.canLaunchTitles()) {
+        if (why) *why = "a prévia do Windows não executa títulos do Xbox 360";
+        return false;
+    }
+    g->lastPlayed = int64_t(std::time(nullptr));
+    lib_.markDirty();
+    saveLibrary(true);  // grava antes de sair
+    logInfo("Jogar: %s [%s] %s", g->displayName().c_str(), hex8(g->titleId).c_str(), g->path.c_str());
+    return requestLaunchTitle(g->path, why);
+}
+
+void App::pollLibrary(float dt) {
+    libSaveTimer_ += dt;
+    if (scanner_.finished()) {
+        std::vector<GameEntry> found;
+        ScanStats st;
+        if (scanner_.take(found, st)) {
+            int added = 0;
+            lib_.merge(found, st, int64_t(std::time(nullptr)), &added);
+            // Miniaturas dos pacotes GOD/XBLA viram capa provisoria (sem rede).
+            const std::string dir = platform_.dataPath() + "capas/";
+            for (const GameEntry& f : found) {
+                if (f.thumb.empty()) continue;
+                for (GameEntry& g : lib_.games())
+                    if (g.id == f.id && g.cover.empty()) {
+                        makeDirs(dir);
+                        const std::string file = hex8(g.titleId) + "_mini.png";
+                        if (writeFileAtomic(dir + file, f.thumb.data(), f.thumb.size())) {
+                            g.cover = file;
+                            g.coverSource = 3;
+                        }
+                    }
+            }
+            for (GameEntry& g : lib_.games()) std::vector<uint8_t>().swap(g.thumb);
+            logInfo("Biblioteca: %s", lib_.lastScanSummary().c_str());
+            for (const std::string& n : st.notes) logInfo("  busca: %s", n.c_str());
+            if (scanManual_ || added > 0)
+                toast("Biblioteca atualizada: " + std::to_string(lib_.view(Library::Filter::All).size()) + " jogos (" +
+                      std::to_string(added) + " novos)");
+            if (lib_.options().autoCovers)
+                for (const GameEntry& g : lib_.games())
+                    if (g.available && g.duplicateOf.empty() && (g.cover.empty() || g.coverSource == 3))
+                        coverSvc_.request(g.id, g.titleId, false, false);
+            saveLibrary(true);
+            if (activeDash_ == DashboardId::Count) publishLibrary();
+        }
+    }
+    for (const CoverResult& r : coverSvc_.takeResults()) {
+        GameEntry* g = lib_.find(r.gameId);
+        if (r.ok && g) {
+            if (g->cover != r.file) coverTex_.invalidate(*ctx_.renderer, g->cover);
+            coverTex_.invalidate(*ctx_.renderer, r.file);
+            g->cover = r.file;
+            g->coverSource = r.source;
+            lib_.markDirty();
+        }
+        if (r.ok) logInfo("Capa %s: %s", hex8(r.titleId).c_str(), r.message.c_str());
+        else logWarn("Capa %s: %s", hex8(r.titleId).c_str(), r.message.c_str());
+        if (r.manual) toast(r.ok ? "Capa atualizada" : "Capa: " + r.message);
+    }
+    coverTex_.pump(*ctx_.renderer);
+    saveLibrary(false);
+}
+
+void App::logTimings() {
+    for (const auto& kv : timings_) {
+        const ScreenTiming& t = kv.second;
+        if (!t.frames) continue;
+        logInfo("Tempo %s: %llu quadros, media %.2f ms, pior %.2f ms (atualizacao %.2f, desenho %.2f), %llu lentos (>33 ms)",
+                kv.first.c_str(), (unsigned long long)t.frames, t.sumMs / double(t.frames), t.maxMs, t.maxUpdateMs,
+                t.maxRenderMs, (unsigned long long)t.slow);
+    }
+}
 
 // ---------------------------------------------------------------- quadro
 
@@ -378,6 +685,11 @@ void App::frame(const RawPadState& raw, float dt) {
 
     runPending();
     if (toastT_ > 0) toastT_ -= dt;
+    pollLibrary(dt);
+    profileTimer_ += dt;
+    if (profileTimer_ >= 2.0f) { profileTimer_ = 0; refreshProfile(); }
+    audioCheckTimer_ += dt;
+    if (audioCheckTimer_ >= 1.0f) { audioCheckTimer_ = 0; checkAudioDiagnostics(); }
 
     // Tema sonoro segue a tela do topo: dashboard -> sons da versao;
     // telas do Neutro X (menus, configuracoes, overlays) -> sons do Neutro X.
@@ -389,6 +701,7 @@ void App::frame(const RawPadState& raw, float dt) {
     }
 
     // ---- desenho
+    const double tUpdate = platform_.timeSeconds();
     IRenderer& r = *ctx_.renderer;
     r.beginFrame();
     if (phase_ == Phase::Loading) {
@@ -411,13 +724,41 @@ void App::frame(const RawPadState& raw, float dt) {
     }
     renderOverlays(r);
     r.endFrame();
+    const double tRender = platform_.timeSeconds();
     platform_.present();
 
-    // ---- estatisticas
+    // ---- estatisticas e instrumentacao
     double t1 = platform_.timeSeconds();
     stats_.frames++;
     stats_.frameMs = float((t1 - t0) * 1000.0);
+    stats_.updateMs = float((tUpdate - t0) * 1000.0);
+    stats_.renderMs = float((tRender - tUpdate) * 1000.0);
+    stats_.presentMs = float((t1 - tRender) * 1000.0);
     if (stats_.frames > 30 && stats_.frameMs > stats_.worstFrameMs) stats_.worstFrameMs = stats_.frameMs;
+    {
+        // CPU do quadro sem a espera do vblank (present no console espera a tela).
+        const double cpuMs = double(stats_.updateMs) + double(stats_.renderMs);
+        const std::string key = phase_ == Phase::Idle ? std::string(topScreenName()) : std::string("(transicao)");
+        ScreenTiming& tm = timings_[key];
+        tm.frames++;
+        tm.sumMs += cpuMs;
+        if (cpuMs > tm.maxMs) tm.maxMs = cpuMs;
+        if (stats_.updateMs > tm.maxUpdateMs) tm.maxUpdateMs = stats_.updateMs;
+        if (stats_.renderMs > tm.maxRenderMs) tm.maxRenderMs = stats_.renderMs;
+        if (cpuMs > 33.0 && stats_.frames > 30) {
+            tm.slow++;
+            stats_.slowFrames++;
+            // Registra a travada (no maximo uma linha por segundo) com a parte que pesou.
+            if (t1 - lastSpikeLog_ >= 1.0) {
+                lastSpikeLog_ = t1;
+                const bool nav = in.press(Button::Up) || in.press(Button::Down) || in.press(Button::Left) ||
+                                 in.press(Button::Right) || in.press(Button::LB) || in.press(Button::RB);
+                logWarn("Quadro lento em %s: %.1f ms (atualizacao %.1f, desenho %.1f, apresentacao %.1f)%s", key.c_str(),
+                        double(stats_.frameMs), double(stats_.updateMs), double(stats_.renderMs), double(stats_.presentMs),
+                        nav ? " ao navegar" : "");
+            }
+        }
+    }
     fpsAccum_ += dt;
     fpsFrames_++;
     if (fpsAccum_ >= 0.5f) {
@@ -454,8 +795,9 @@ void App::renderOverlays(IRenderer& r) {
     }
     if (settings_.showFps) {
         char buf[96];
-        std::snprintf(buf, sizeof(buf), "%.0f FPS  %.1f ms  tex %d/%uKB", stats_.fps, stats_.frameMs,
-                      r.textureCount(), unsigned(r.textureBytes() / 1024));
+        std::snprintf(buf, sizeof(buf), "%.0f FPS  %.1f ms (lógica %.1f  desenho %.1f  tela %.1f)  lentos %llu  tex %d/%uKB",
+                      stats_.fps, stats_.frameMs, stats_.updateMs, stats_.renderMs, stats_.presentMs,
+                      (unsigned long long)stats_.slowFrames, r.textureCount(), unsigned(r.textureBytes() / 1024));
         TextStyle st;
         st.size = 16;
         float w = r.measureText(buf, st) + 16;

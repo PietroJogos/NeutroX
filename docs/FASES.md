@@ -12,7 +12,7 @@
 | 7 | Metro V1: blocos, categorias, animações | ✅ Concluída (11/11/2026) |
 | 8 | Metro V2: tema escuro, blocos, biblioteca demonstrativa | ✅ Concluída (11/11/2026) |
 | 9 | Integração, memória, estabilidade, desempenho | ✅ Concluída (11/11/2026) |
-| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | 🔶 XEX gerado (0.8.0-beta); **aguardando o teste no console** |
+| 10 | Compilação para Xbox 360 (XEX), instalação e teste pelo Aurora | 🔶 XEX gerado; correções do primeiro teste no console (0.9.0-beta); **aguardando novo teste** |
 
 Política de releases: toda versão é publicada como **pré-release (beta)** até a Fase 10
 terminar; só então uma versão é marcada como *Latest*.
@@ -161,3 +161,17 @@ terminar; só então uma versão é marcada como *Latest*.
 - **Não testado em hardware.** O Xenia não apresenta a imagem de títulos do xsdk; a
   conclusão da fase depende do teste no console descrito em
   [INSTALACAO_XBOX.md](INSTALACAO_XBOX.md). Só depois disso uma versão vira *Latest*.
+
+## Fase 10 — correções do primeiro uso no console (0.9.0-beta)
+
+Problemas relatados no console real e o que foi feito (detalhes nos documentos indicados):
+
+| Relato | Feito | Documento |
+|---|---|---|
+| O Xbox reiniciava ao sair | Encerramento ordenado (áudio parado antes de fechar o driver, GPU e tela liberadas, log de cada etapa) e saída por troca de aplicativo: **Voltar ao Aurora / Voltar ao Xbox Dashboard / Cancelar**. Nenhuma função de reinício é usada | [SAIDA_E_INICIALIZACAO.md](SAIDA_E_INICIALIZACAO.md) |
+| Travadas e quedas ao usar dashboards e ao voltar ao começo | Medição por quadro (lógica/desenho/tela) na tela e no log; retângulos e misturas 3–9× mais rápidos; rasterização paralela em 6 threads, idêntica pixel a pixel | [DESEMPENHO.md](DESEMPENHO.md) |
+| Nenhum som no console | Causa: originais ausentes no console com a fonte "Originais" (mudo por projeto). Instalador por FTP, diagnóstico de saída/mixer/pedidos, teste de saída, terceira fonte explícita, WAV float big-endian | [SONS.md](SONS.md) |
+| Biblioteca real (Meus Jogos) | Busca por cabeçalhos reais (default.xex, GOD, XBLA), pastas, profundidade, ignorados, duplicatas, favoritos, pesquisa, detalhes, Jogar, capas do XboxUnity com cache e importação, uma biblioteca com aparência por interface | [BIBLIOTECA.md](BIBLIOTECA.md) |
+| Avatar do perfil | Nome do perfil real (XAM, somente leitura) e troca de perfil; avatar 3D e imagem do jogador indisponíveis no xsdk (explicado) | [LIMITACOES.md](LIMITACOES.md) |
+
+Nenhum item acima foi testado no Xbox 360: a Fase 10 continua aberta até o novo teste.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NeutroX VERSION 0.8.0 LANGUAGES CXX)
+project(NeutroX VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,9 +11,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # E esta biblioteca que sera compilada para o Xbox 360 (ver docs/TOOLCHAIN.md).
 add_library(neutrox_core STATIC
     src/core/app.cpp
+    src/core/fsutil.cpp
     src/core/log.cpp
     src/core/png_writer.cpp
     src/graphics/font.cpp
+    src/graphics/image_decode.cpp
     src/graphics/soft_renderer.cpp
     src/graphics/ui.cpp
     src/input/input_mapper.cpp
@@ -26,6 +28,11 @@ add_library(neutrox_core STATIC
     src/audio/themes/metro_v1_15574.cpp
     src/audio/themes/metro_v2_17559.cpp
     src/settings/settings.cpp
+    src/library/covers.cpp
+    src/library/library.cpp
+    src/net/http.cpp
+    src/library/title_meta.cpp
+    src/system/launcher.cpp
     src/dashboards/registry.cpp
     src/dashboards/common/demo_content.cpp
     src/dashboards/blades/blades_dashboard.cpp
@@ -33,6 +40,8 @@ add_library(neutrox_core STATIC
     src/dashboards/kinect/kinect_dashboard.cpp
     src/dashboards/metro_v1/metro_v1_dashboard.cpp
     src/dashboards/metro_v2/metro_v2_dashboard.cpp
+    src/shell/library_screens.cpp
+    src/shell/library_settings.cpp
     src/shell/main_menu.cpp
     src/shell/screens.cpp
 )
@@ -60,6 +69,9 @@ endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(neutrox_core PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(neutrox_core PUBLIC ws2_32)  # sockets (capas)
+endif()
 
 # Pre-visualizacao no Windows.
 if(WIN32)
@@ -77,6 +89,7 @@ add_executable(neutrox_xex_unpack tools/xex_unpack.cpp)
 # Testes automatizados (plataforma headless).
 add_executable(neutrox_tests tests/test_main.cpp)
 target_link_libraries(neutrox_tests PRIVATE neutrox_core)
+target_compile_definitions(neutrox_tests PRIVATE NX_TEST_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures/")
 
 enable_testing()
 add_test(NAME neutrox_tests COMMAND neutrox_tests ${CMAKE_BINARY_DIR}/test_output)

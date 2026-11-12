@@ -1,12 +1,18 @@
 // Neutro X - conteudo de demonstracao. Titulos e textos ficticios criados para o projeto.
 #include "dashboards/common/demo_content.h"
 
+#include <deque>
+#include "library/library.h"
+#include "library/title_meta.h"
+
 namespace nx {
 
 namespace {
 #define NX_N(a) int(sizeof(a) / sizeof((a)[0]))
 
-const DemoGame kGames[] = {
+// Jogos ficticios antigos: mantidos so como referencia de estilo; NAO aparecem mais
+// nas interfaces (a lista de jogos vem da biblioteca real).
+[[maybe_unused]] const DemoGame kGames[] = {
     {"Corrida Neutra", "Corrida", "2026", "Corridas em pistas que mudam de cor a cada volta.", 101,
      Color::hex(0xF0C020), Color::hex(0x6A4A10), 650, 1000, false},
     {"Planeta Azul", "Aventura", "2026", "Explore um planeta oceânico e catalogue suas criaturas.", 102,
@@ -47,14 +53,69 @@ const DemoMedia kPictures[] = {
     {"Paisagem 03", "1280 × 720"},
 };
 
-const DemoProfile kProfile = {"Jogador", "Jogando offline com o Neutro X", "Recreativa", 1910};
+std::string g_gamertag = "Sem perfil";
+DemoProfile g_profile = {"Sem perfil", "não lido pelo Neutro X", "não lida", -1, false};
+unsigned g_libVersion = 1;
+
+std::vector<DemoGame> g_lib;
+std::deque<std::string> g_strings;  // mantem os textos vivos enquanto o retrato existir
+std::vector<std::string> g_ids;
+
+const char* keep(const std::string& s) {
+    g_strings.push_back(s);
+    return g_strings.back().c_str();
+}
 }  // namespace
 
-const DemoGame* demoGames(int& n) { n = NX_N(kGames); return kGames; }
+void publishLibraryGames(const std::vector<const GameEntry*>& games) {
+    std::vector<DemoGame> lib;
+    std::deque<std::string> strings;
+    g_strings.swap(strings);  // os antigos so saem depois de montar os novos
+    g_ids.clear();
+    for (const GameEntry* g : games) {
+        DemoGame d{};
+        d.title = keep(g->displayName());
+        d.genre = keep(g->kind == GameKind::Xbla ? "Arcade" : g->kind == GameKind::God ? "Games on Demand" : g->kind == GameKind::App ? "Aplicativo" : "Jogo");
+        d.year = keep("Title ID " + hex8(g->titleId));
+        d.description = keep(std::string(gameKindName(g->kind)) + (g->available ? "" : " · indisponível") + " · " + g->path);
+        // Arte provisoria deterministica (a capa real, quando houver, aparece em Meus Jogos).
+        const uint32_t h = g->titleId * 2654435761u;
+        d.artSeed = int(1000 + (h % 90000));
+        d.c1 = Color(uint8_t(60 + (h >> 8) % 160), uint8_t(60 + (h >> 16) % 160), uint8_t(60 + (h >> 24) % 160));
+        d.c2 = Color(uint8_t(d.c1.r / 4), uint8_t(d.c1.g / 4), uint8_t(d.c1.b / 4));
+        d.points = 0;
+        d.maxPoints = 0;
+        d.arcade = g->kind == GameKind::Xbla;
+        lib.push_back(d);
+        g_ids.push_back(g->id);
+    }
+    g_lib.swap(lib);
+    ++g_libVersion;
+}
+
+unsigned libraryGamesVersion() { return g_libVersion; }
+
+void publishProfile(bool supported, bool signedIn, const std::string& gamertag) {
+    g_gamertag = !supported ? "Prévia (sem perfil)" : signedIn ? gamertag : "Nenhum perfil conectado";
+    g_profile.gamertag = g_gamertag.c_str();
+    g_profile.real = supported && signedIn;
+}
+
+std::string profilePointsText(const DemoProfile& p, bool shortForm) {
+    if (p.points < 0) return shortForm ? "— P" : "Gamerscore não lido";
+    return std::to_string(p.points) + (shortForm ? " P" : " pontos");
+}
+
+std::string libraryGameId(int i) { return i >= 0 && i < int(g_ids.size()) ? g_ids[size_t(i)] : ""; }
+
+const DemoGame* demoGames(int& n) {
+    n = int(g_lib.size());
+    return g_lib.empty() ? nullptr : g_lib.data();
+}
 const DemoFriend* demoFriends(int& n) { n = NX_N(kFriends); return kFriends; }
 const DemoMedia* demoMusic(int& n) { n = NX_N(kMusic); return kMusic; }
 const DemoMedia* demoVideos(int& n) { n = NX_N(kVideos); return kVideos; }
 const DemoMedia* demoPictures(int& n) { n = NX_N(kPictures); return kPictures; }
-const DemoProfile& demoProfile() { return kProfile; }
+const DemoProfile& demoProfile() { return g_profile; }
 
 }  // namespace nx

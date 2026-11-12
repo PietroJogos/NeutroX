@@ -20,8 +20,13 @@ struct Settings {
     int accentTheme = 0;  // indice em kAccentThemes
     std::string language = "pt-BR";
     bool showFps = false;
-    // Sons dos dashboards: 0 = originais (pasta local), 1 = recriados pelo Neutro X.
+    // Sons dos dashboards: 0 = originais (pasta local), 1 = recriados pelo Neutro X,
+    // 2 = originais e, SO nos efeitos sem original, os recriados (escolha explicita do usuario).
     int dashboardSounds = 0;
+    // Caminho do Aurora para "Voltar ao Aurora" (vazio = procurar automaticamente).
+    std::string auroraPath;
+    // Qualidade de desenho no console: 0 = automatica, 1 = sempre 1280x720, 2 = desempenho (960x540).
+    int renderQuality = 0;
     // Opcoes de cada interface (fundo, avatar, cores...), chave "<dashboard>.<opcao>".
     // Gravadas como linhas "opt.<chave>=<inteiro>".
     std::map<std::string, int> dashOptions;

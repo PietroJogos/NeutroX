@@ -55,7 +55,14 @@ MTile tile(int c, int r, int w, int h, Icon ic, std::string label, std::string d
 
 MTile gameTile(int c, int r, int w, int h, int gi) {
     int n = 0;
-    const DemoGame& g = demoGames(n)[gi];
+    const DemoGame* gl = demoGames(n);
+    if (gi >= n) {
+        // Sem jogo nesta posicao: bloco que abre Meus Jogos (nenhum jogo ficticio).
+        return tile(c, r, w, h, Icon::Controller, gi == 0 ? "Meus jogos" : "Adicionar jogos",
+                    n ? "Abra Meus Jogos para ver todos." : "Nenhum jogo ainda: adicione pastas em Configurações > Jogos.",
+                    Kind::Generic, 1, gi == 0 ? Style::Accent : Style::Dark);
+    }
+    const DemoGame& g = gl[gi];
     return tile(c, r, w, h, g.arcade ? Icon::Star : Icon::Controller, g.title, g.description, Kind::Game, gi, Style::Art,
                 g.artSeed, g.c1, g.c2);
 }
@@ -67,7 +74,7 @@ std::vector<MCategory> buildCategories() {
     const DemoMedia* vi = demoVideos(vn);
     c[0].name = "início";
     c[0].tiles = {gameTile(0, 0, 2, 2, 0),
-                  tile(2, 0, 1, 1, Icon::Controller, "Meus jogos", "Sua coleção de jogos de demonstração.", Kind::Generic, 1, Style::Accent),
+                  tile(2, 0, 1, 1, Icon::Controller, "Meus jogos", "Sua biblioteca de jogos.", Kind::Generic, 1, Style::Accent),
                   tile(3, 0, 1, 1, Icon::Person, "Perfil", "Seu perfil local.", Kind::Profile, 0, Style::Accent),
                   tile(2, 1, 2, 1, Icon::Friends, "Amigos", "Amigos de demonstração (modo offline).", Kind::Generic, 2, Style::Art, 1501,
                        Color::hex(0x58B4E8), Color::hex(0x1A4A6A)),
@@ -96,7 +103,7 @@ std::vector<MCategory> buildCategories() {
                        Color::hex(0x5A6070), Color::hex(0x20242C)),
                   tile(3, 1, 1, 1, Icon::Video, "Trailers", "Trailers de demonstração.", Kind::Generic, 24, Style::Dark)};
     c[4].name = "jogos";
-    c[4].tiles = {tile(0, 0, 1, 1, Icon::Controller, "Meus jogos", "Sua coleção de jogos de demonstração.", Kind::Generic, 1, Style::Accent),
+    c[4].tiles = {tile(0, 0, 1, 1, Icon::Controller, "Meus jogos", "Sua biblioteca de jogos.", Kind::Generic, 1, Style::Accent),
                   tile(0, 1, 1, 1, Icon::Trophy, "Conquistas", "Pontos e conquistas por jogo.", Kind::Generic, 3, Style::Art, 1506,
                        Color::hex(0xC89A5A), Color::hex(0x5A3A1A)),
                   gameTile(1, 0, 2, 2, 1),
@@ -104,7 +111,7 @@ std::vector<MCategory> buildCategories() {
                   gameTile(3, 1, 1, 1, 3),
                   gameTile(4, 0, 2, 1, 4),
                   tile(4, 1, 1, 1, Icon::Download, "Demos", "Demonstrações locais.", Kind::Generic, 6, Style::Dark),
-                  tile(5, 1, 1, 1, Icon::List, "A - Z", "Todos os jogos de demonstração em ordem.", Kind::Generic, 7, Style::Accent)};
+                  tile(5, 1, 1, 1, Icon::List, "A - Z", "Todos os jogos da biblioteca em ordem.", Kind::Generic, 7, Style::Accent)};
     c[5].name = "música";
     c[5].tiles = {tile(0, 0, 2, 2, Icon::Music, mu[0].title, mu[0].detail, Kind::Generic, 30, Style::Art, 1507, Color::hex(0xE0407A),
                        Color::hex(0x3A0A20)),
@@ -135,7 +142,13 @@ std::vector<MCategory> buildCategories() {
 }
 
 const std::vector<MCategory>& categories() {
-    static const std::vector<MCategory> c = buildCategories();
+    // Refeita quando a biblioteca publicada muda (so entre aberturas de interface).
+    static std::vector<MCategory> c;
+    static unsigned ver = 0;
+    if (ver != libraryGamesVersion()) {
+        c = buildCategories();
+        ver = libraryGamesVersion();
+    }
     return c;
 }
 
@@ -183,24 +196,26 @@ MDetail buildDetail(const MCategory& cat, const MTile& t, Context* ctx) {
     int n = 0;
     const DemoGame* g = demoGames(n);
     const DemoProfile& p = demoProfile();
-    if (t.kind == Kind::Game) {
+    if (t.kind == Kind::Game && t.index >= 0 && t.index < n) {
         const DemoGame& gm = g[t.index];
-        d.rows = {row(Icon::Controller, "jogar", "demonstração (não executável)", kActPlay),
-                  row(Icon::Trophy, "conquistas", std::to_string(gm.points) + " de " + std::to_string(gm.maxPoints) + " pontos",
-                      kActInfo, float(gm.points) / gm.maxPoints),
-                  row(Icon::Info, "detalhes", std::string(gm.genre) + " · " + gm.year)};
+        d.rows = {row(Icon::Controller, "jogar", "detalhes, capa e jogar", kActPlay),
+                  row(Icon::Info, "detalhes", std::string(gm.genre) + " · " + gm.year, kActPlay)};
+        for (InfoRow& rw : d.rows) rw.gameId = libraryGameId(t.index);
         return d;
     }
     if (t.kind == Kind::Profile) {
-        d.rows = {row(Icon::Person, p.gamertag, "nome do jogador (local)"),
-                  row(Icon::Trophy, std::to_string(p.points) + " pontos", "pontuação de demonstração"),
+        d.rows = {row(Icon::Person, p.gamertag, p.real ? "perfil conectado (somente leitura)" : "sem perfil conectado"),
+                  row(Icon::Trophy, profilePointsText(p), "gamerscore"),
                   row(Icon::Mail, p.motto, "lema"), row(Icon::Globe, p.zone, "zona de jogo")};
         return d;
     }
     switch (t.index) {
         case 1:
         case 7:
-            for (int i = 0; i < n; ++i) d.rows.push_back(row(g[i].arcade ? Icon::Star : Icon::Controller, g[i].title, std::string(g[i].genre) + " · " + g[i].year));
+            for (int i = 0; i < n; ++i) {
+                d.rows.push_back(row(g[i].arcade ? Icon::Star : Icon::Controller, g[i].title, std::string(g[i].genre) + " · " + g[i].year, kActPlay));
+                d.rows.back().gameId = libraryGameId(i);
+            }
             if (t.index == 7) std::sort(d.rows.begin(), d.rows.end(), [](const InfoRow& a, const InfoRow& b) { return a.title < b.title; });
             break;
         case 2: {
@@ -211,12 +226,15 @@ MDetail buildDetail(const MCategory& cat, const MTile& t, Context* ctx) {
         }
         case 3:
             for (int i = 0; i < n; ++i)
-                d.rows.push_back(row(Icon::Trophy, g[i].title, std::to_string(g[i].points) + " / " + std::to_string(g[i].maxPoints),
-                                     kActInfo, float(g[i].points) / g[i].maxPoints));
+                d.rows.push_back(row(Icon::Trophy, g[i].title, std::string("conquistas não lidas pelo Neutro X"),
+                                     kActInfo, -1.0f));
             break;
         case 4: d.rows = {row(Icon::Mail, "Bem-vindo ao Neutro X", "mensagem do sistema · lida")}; break;
         case 5:
-            for (int i = 0; i < 4 && i < n; ++i) d.rows.push_back(row(Icon::Clock, g[i].title, i == 0 ? "hoje" : "esta semana"));
+            for (int i = 0; i < 4 && i < n; ++i) {
+                d.rows.push_back(row(Icon::Clock, g[i].title, "na sua biblioteca", kActPlay));
+                d.rows.back().gameId = libraryGameId(i);
+            }
             break;
         case 40: {
             char b[40] = "12:00";
@@ -324,7 +342,7 @@ void drawTile(IRenderer& r, const MTile& t, const Rectf& rc, Color accent, bool 
             ts.color = Color::hex(0x24384A);
             r.drawText(p.gamertag, rc.x + 14, rc.y + 12, ts);
             ts.size = 18;
-            std::string pts = std::to_string(p.points) + " pontos";
+            std::string pts = profilePointsText(p);
             r.drawText(pts.c_str(), rc.x + 14, rc.y + 46, ts);
             ls.color = Color::hex(0x24384A);
             break;
@@ -729,6 +747,9 @@ private:
                 case Kind::OpenSettings: ctx.sfx(Sfx::Confirm); ctx.app->openSettings(); break;
                 case Kind::OpenAbout: ctx.sfx(Sfx::Confirm); ctx.app->openAbout(); break;
                 case Kind::OpenSounds: ctx.sfx(Sfx::Confirm); ctx.app->openSoundStatus(); break;
+                case Kind::Generic:
+                    if (t.index == 1) { ctx.sfx(Sfx::Confirm); ctx.app->openLibrary(); break; }
+                    [[fallthrough]];
                 default:
                     st_.detail = buildDetail(cats[size_t(c)], t, &ctx);
                     st_.detailOpen = true;
@@ -760,9 +781,9 @@ private:
         if (before != st_.detailSel) ctx.sfx(Sfx::Navigate);
         if (in.press(Button::A) && n > 0) {
             const InfoRow& rw = st_.detail.rows[size_t(st_.detailSel)];
-            if (rw.action == kActPlay) {
-                ctx.sfx(Sfx::Error, 0.7f);
-                ctx.app->toast("Jogos de demonstração não são executados pelo Neutro X");
+            if (rw.action == kActPlay && !rw.gameId.empty()) {
+                ctx.sfx(Sfx::Confirm);
+                ctx.app->openGameDetails(rw.gameId);
             } else {
                 ctx.sfx(Sfx::Open, 0.8f);
                 ctx.app->toast(rw.title + ": item de demonstração (somente informativo)");

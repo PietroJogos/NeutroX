@@ -6,9 +6,11 @@
 
 namespace nx {
 
+std::string fitTextShared(IRenderer& r, const std::string& s, const TextStyle& st, float maxW);
+
 namespace {
 
-enum class ItemKind { Dashboard, Settings, About, Exit };
+enum class ItemKind { Dashboard, Library, Settings, About, Exit };
 
 struct MenuItem {
     ItemKind kind;
@@ -18,13 +20,13 @@ struct MenuItem {
 const MenuItem kItems[] = {
     {ItemKind::Dashboard, DashboardId::Blades}, {ItemKind::Dashboard, DashboardId::Nxe},
     {ItemKind::Dashboard, DashboardId::Kinect}, {ItemKind::Dashboard, DashboardId::MetroV1},
-    {ItemKind::Dashboard, DashboardId::MetroV2}, {ItemKind::Settings, DashboardId::Count},
+    {ItemKind::Dashboard, DashboardId::MetroV2}, {ItemKind::Library, DashboardId::Count}, {ItemKind::Settings, DashboardId::Count},
     {ItemKind::About, DashboardId::Count},       {ItemKind::Exit, DashboardId::Count},
 };
 constexpr int kItemCount = int(sizeof(kItems) / sizeof(kItems[0]));
 
-constexpr float kListX = 52, kListY = 150, kListW = 500;
-constexpr float kDashH = 66, kOtherH = 46, kGap = 6;
+constexpr float kListX = 52, kListY = 132, kListW = 500;
+constexpr float kDashH = 60, kOtherH = 40, kGap = 5;
 
 float itemY(int i) {
     float y = kListY;
@@ -59,7 +61,7 @@ public:
         int before = sel_;
         if (in.press(Button::Down)) sel_ = (sel_ + 1) % kItemCount;
         if (in.press(Button::Up)) sel_ = (sel_ + kItemCount - 1) % kItemCount;
-        if (in.press(Button::RB)) sel_ = sel_ < 5 ? 5 : 0;  // salta entre grupos
+        if (in.press(Button::RB)) sel_ = sel_ < 5 ? 5 : 0;  // salta entre grupos (dashboards / demais)
         if (in.press(Button::LB)) sel_ = sel_ >= 5 ? 0 : 5;
         if (sel_ != before) {
             ctx.sfx(Sfx::Navigate);
@@ -93,6 +95,10 @@ public:
                 ctx.sfx(Sfx::Confirm);
                 ctx.app->openDashboard(kItems[i].dash);
                 break;
+            case ItemKind::Library:
+                ctx.sfx(Sfx::Open);
+                ctx.app->openLibrary();
+                break;
             case ItemKind::Settings:
                 ctx.sfx(Sfx::Open);
                 ctx.app->openSettings();
@@ -103,9 +109,7 @@ public:
                 break;
             case ItemKind::Exit:
                 ctx.sfx(Sfx::Open);
-                ctx.app->push(createConfirmDialog("Sair do Neutro X?",
-                                                  "O aplicativo será encerrado. Nenhum arquivo do sistema foi alterado.",
-                                                  [](Context& c) { c.app->requestQuit(); }));
+                ctx.app->push(createExitDialog(ctx));
                 break;
         }
     }
@@ -173,7 +177,7 @@ private:
             Color tc = sel ? Color(255, 255, 255) : Color(196, 204, 214);
             if (kItems[i].kind == ItemKind::Dashboard) {
                 const DashboardInfo& info = dashboardInfo(kItems[i].dash);
-                Rectf th{kListX + 8, y + 7, 92, 52};
+                Rectf th{kListX + 8, y + 6, 86, 48};
                 r.fillRect(th.offset(2, 3), Color(0, 0, 0, 80));
                 r.drawTexture(ctx.app->previewTexture(info.id, true), th);
                 r.strokeRect(th, sel ? 2.0f : 1.0f, sel ? Color(255, 255, 255) : Color(255, 255, 255, 60));
@@ -181,12 +185,12 @@ private:
                 ns.size = 27;
                 ns.weight = sel ? FontWeight::Bold : FontWeight::Regular;
                 ns.color = tc;
-                r.drawText(info.name, kListX + 116, y + 8, ns);
+                r.drawText(info.name, kListX + 116, y + 5, ns);
                 TextStyle vs;
                 vs.size = 16;
                 vs.color = sel ? Color(235, 240, 245) : Color(130, 140, 152);
                 std::string line = std::string(info.version) + "  ·  " + info.year;
-                r.drawText(line.c_str(), kListX + 117, y + 41, vs);
+                r.drawText(line.c_str(), kListX + 117, y + 37, vs);
                 if (ctx.settings->defaultDashboard == info.key) {
                     TextStyle bs;
                     bs.size = 13;
@@ -200,8 +204,10 @@ private:
                 }
             } else {
                 Icon icon = kItems[i].kind == ItemKind::Settings ? Icon::Gear
+                            : kItems[i].kind == ItemKind::Library ? Icon::Controller
                             : kItems[i].kind == ItemKind::About ? Icon::Info : Icon::Power;
                 const char* label = kItems[i].kind == ItemKind::Settings ? "Configurações"
+                                    : kItems[i].kind == ItemKind::Library ? "Meus Jogos"
                                     : kItems[i].kind == ItemKind::About ? "Sobre o Neutro X" : "Sair";
                 drawIcon(r, icon, kListX + 54, y + h * 0.5f, 26, tc, sel ? brighten(accent, -0.1f) : Color::hex(0x121921));
                 TextStyle ns;
@@ -276,7 +282,29 @@ private:
         r.fillRoundRect(card.offset(0, 8), 14, Color(0, 0, 0, 80));
         r.fillRoundRect(card, 14, Color(22, 30, 40, 235));
         r.strokeRoundRect(card, 14, 1.5f, accent.withAlpha(120));
-        if (kItems[i].kind == ItemKind::Settings) {
+        if (kItems[i].kind == ItemKind::Library) {
+            Library& lib = ctx.app->library();
+            drawIcon(r, Icon::Controller, 720, 270, 130, accent, Color(22, 30, 40));
+            const int games = int(lib.view(Library::Filter::All).size());
+            int favs = 0, unavailable = 0;
+            for (int gi : lib.view(Library::Filter::All)) {
+                favs += lib.games()[size_t(gi)].favorite;
+                unavailable += !lib.games()[size_t(gi)].available;
+            }
+            std::string lines[4] = {
+                std::to_string(games) + (games == 1 ? " jogo na biblioteca" : " jogos na biblioteca"),
+                std::to_string(lib.folders().size()) + " pastas monitoradas",
+                std::to_string(favs) + " favoritos · " + std::to_string(unavailable) + " indisponíveis",
+                ctx.app->libraryScanning() ? "procurando jogos agora…" : (lib.lastScanSummary().empty() ? "nenhuma busca ainda" : "última busca: " + lib.lastScanSummary()),
+            };
+            TextStyle ls = body;
+            ls.color = Color(214, 220, 228);
+            ls.size = 18;
+            for (int k2 = 0; k2 < 4; ++k2) r.drawText(fitTextShared(r, lines[k2], ls, 380).c_str(), 820, 196 + k2 * 40.0f, ls);
+            r.drawText("Meus Jogos", 604, 520, title);
+            drawWrapped(r, "Jogos reais encontrados nos seus dispositivos (default.xex, GOD e XBLA), com capas, favoritos e Jogar.",
+                        604, 572, 620, body, 28, 2);
+        } else if (kItems[i].kind == ItemKind::Settings) {
             drawIcon(r, Icon::Gear, 720, 270, 130, accent, Color(22, 30, 40));
             const Settings& s = *ctx.settings;
             const DashboardInfo* def = findDashboard(s.defaultDashboard);

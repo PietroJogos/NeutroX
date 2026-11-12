@@ -14,6 +14,44 @@ A fonte usada nos dashboards é escolhida em **Configurações → Sons dos dash
   **Um efeito ausente fica mudo**; ele não é trocado automaticamente por uma recriação.
   Ao abrir um dashboard incompleto aparece um aviso com a contagem (ex.: "0 de 8").
 - **Recriados pelo Neutro X** — só quando você escolhe explicitamente.
+- **Originais + recriados nos ausentes** (0.9.0) — escolha explícita: toca o original quando
+  existe e o recriado **somente** nos efeitos sem original. A tela de estado e o log dizem
+  quantos de cada.
+
+## Sem som no Xbox 360 (0.8.0): causa e diagnóstico
+
+**Causa encontrada:** com a fonte padrão "Originais", o Neutro X procura os arquivos em
+`local_audio/`, ao lado do `.xex`. Sem essa pasta no console (ela fica no PC, em
+`%LOCALAPPDATA%\NeutroX\local_audio\`), **todos os efeitos dos dashboards ficam mudos por
+projeto**, sem substituição automática. Mesmo com a pasta copiada, só o Metro V2 tem
+originais (7 de 8): os XEX dos outros quatro são criptografados.
+
+**Correções na 0.9.0:**
+
+- `tools/xbox_install.py` envia o `NeutroX.xex` e a `local_audio/` (WAV + `.ini`) para a pasta
+  do Neutro X no console, por FTP (`--host <IP>`; a senha é pedida na hora e não é guardada;
+  `--dry-run` mostra o que seria enviado). Assim os sons chegam ao lugar certo sem copiar um
+  por um.
+- Ao abrir um dashboard sem originais, o aviso agora diz exatamente o que acontece ("nenhum
+  som original em local_audio; efeitos mudos"). O log registra cada efeito que ficou mudo e
+  o motivo (`Som mudo: kinect_13604/voltar - arquivo não encontrado`).
+- Leitura de WAV float corrigida para o processador big-endian do console (antes lia os
+  bytes na ordem do PC).
+- O encerramento do áudio para a thread de alimentação antes de fechar o driver.
+
+**Diagnóstico (Configurações → Sons originais: estado):**
+
+- linha **Saída**: dispositivo aberto ou fechado (com o código de erro do `xsdk_audio_open`)
+  e o formato (48 kHz, 6 canais; saída estéreo ou 5.1);
+- contadores: pedidos, tocados, mudos (arquivo ausente ou conjunto não carregado) e pico do
+  sinal misturado;
+- **X — Testar saída**: toca o tom próprio do Neutro X, que não depende de arquivo, e diz se
+  ele foi misturado e entregue ao sistema. Isso separa "áudio ausente" de "erro de
+  reprodução";
+- no log, ao sair: pedidos, tocados, mudos, pico, quadros entregues ao driver e quadros de
+  silêncio por atraso.
+
+**A reprodução real no Xbox 360 ainda não foi confirmada**: depende do seu teste no console.
 
 O tema muda sozinho com a tela: dashboard ativo → sons daquela versão; menus do Neutro X
 (inclusive o menu do START por cima de um dashboard) → sons do Neutro X.
@@ -21,7 +59,8 @@ O tema muda sozinho com a tela: dashboard ativo → sons daquela versão; menus 
 ## Pasta dos sons originais
 
 Windows (prévia): `%LOCALAPPDATA%\NeutroX\local_audio\`
-Console (Fase 10): `local_audio/` dentro da pasta do próprio aplicativo.
+Console: `local_audio/` dentro da pasta do próprio aplicativo (ex.: `Hdd1:\Apps\NeutroX\local_audio\`);
+`tools/xbox_install.py` copia para lá.
 A pasta antiga `sons_originais/` continua aceita quando é a única existente.
 
 Só o conjunto do dashboard ativo fica na memória: ao trocar de dashboard o anterior é

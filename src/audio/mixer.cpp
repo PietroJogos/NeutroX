@@ -111,13 +111,24 @@ void Mixer::playThemed(SoundTheme t, Sfx s, float volume, float pitch) {
     if (si < 0 || si >= kSfxCount || ti < 0 || ti >= kSoundThemeCount) return;
     int key = ti * kSfxCount + si;
     std::lock_guard<std::mutex> lock(mtx_);
+    ++stats_.requests;
     // Temas de dashboard usam a fonte escolhida. Com "Originais", um som
-    // ausente fica mudo (sem substituicao automatica por recriacao).
+    // ausente fica mudo (sem substituicao automatica por recriacao). Com
+    // "Originais + recriados" (escolha explicita), o recriado cobre so o ausente.
     const std::vector<int16_t>* data = &bank_[size_t(key)];
-    if (t != SoundTheme::NeutroX && source_ == SoundSource::Originals) {
-        if (ti != origResident_ || orig_.size() != size_t(kSfxCount) || orig_[size_t(si)].empty()) return;
-        data = &orig_[size_t(si)];
+    if (t != SoundTheme::NeutroX && source_ != SoundSource::Recreated) {
+        const bool resident = ti == origResident_ && orig_.size() == size_t(kSfxCount);
+        if (resident && !orig_[size_t(si)].empty()) {
+            data = &orig_[size_t(si)];
+        } else if (source_ == SoundSource::OriginalsWithRecreated) {
+            ++stats_.recreatedFallback;
+        } else {
+            if (resident) ++stats_.mutedMissing; else ++stats_.mutedNotResident;
+            stats_.mutedMask[ti] |= 1u << si;
+            return;
+        }
     }
+    ++stats_.started;
     // Limita vozes simultaneas: remove a mais antiga do mesmo efeito.
     int same = 0;
     for (const Voice& v : voices_) same += (v.key == key);
@@ -131,6 +142,11 @@ void Mixer::playThemed(SoundTheme t, Sfx s, float volume, float pitch) {
     v.gain = std::max(0.0f, std::min(volume, 1.0f));
     v.step = std::max(0.25f, std::min(pitch, 4.0f));
     voices_.push_back(v);
+}
+
+MixerStats Mixer::stats() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return stats_;
 }
 
 void Mixer::setMasterVolume(float v) {
@@ -163,8 +179,14 @@ void Mixer::mix(int16_t* out, int frames) {
         }
         float o = acc * master_;
         o = std::max(-32767.0f, std::min(32767.0f, o));
-        out[2 * i] = out[2 * i + 1] = int16_t(o);
+        const int16_t v = int16_t(o);
+        out[2 * i] = out[2 * i + 1] = v;
+        const int av = v < 0 ? -int(v) : int(v);
+        if (av) ++stats_.nonSilentFrames;
+        if (av > stats_.peak) stats_.peak = av;
     }
+    stats_.framesMixed += uint64_t(frames);
+    stats_.lastVoices = int(voices_.size());
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(),
                                  [](const Voice& v) { return size_t(v.pos) + 1 >= v.data->size(); }),
                   voices_.end());

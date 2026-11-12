@@ -28,7 +28,7 @@ namespace {
 constexpr int kBlades = 4;
 constexpr float kTabW = 46, kTop = 26, kBottom = 694, kEdgeL = 24, kEdgeR = 1256, kRadius = 22;
 
-enum class Act { Detail, OpenNeutroSettings, OpenAbout };
+enum class Act { Detail, OpenNeutroSettings, OpenAbout, OpenLibrary };
 
 struct BladeItem {
     Icon icon;
@@ -54,11 +54,11 @@ const BladeItem kLive[] = {
     {Icon::Globe, "Configurações da Live", "Representação visual das opções de conexão. Nada é alterado.", Act::Detail},
 };
 const BladeItem kGames[] = {
-    {Icon::Controller, "Biblioteca de Jogos", "Jogos de demonstração do Neutro X, com miniaturas locais.", Act::Detail},
-    {Icon::Star, "Jogos Arcade", "Títulos arcade de demonstração.", Act::Detail},
+    {Icon::Controller, "Meus Jogos", "Sua biblioteca de jogos reais: capas, detalhes e Jogar.", Act::OpenLibrary},
+    {Icon::Star, "Jogos Arcade", "Títulos Xbox Live Arcade da sua biblioteca.", Act::Detail},
     {Icon::Video, "Demos e Trailers", "Vitrine local de demonstrações.", Act::Detail},
-    {Icon::Trophy, "Conquistas", "Pontos e conquistas por jogo (demonstração).", Act::Detail},
-    {Icon::Clock, "Jogados Recentemente", "Últimos jogos abertos (demonstração).", Act::Detail},
+    {Icon::Trophy, "Conquistas", "O Neutro X não lê conquistas do perfil.", Act::Detail},
+    {Icon::Clock, "Adicionados Recentemente", "Jogos da sua biblioteca.", Act::Detail},
 };
 const BladeItem kMedia[] = {
     {Icon::Music, "Música", "Biblioteca de música local de demonstração.", Act::Detail},
@@ -86,6 +86,7 @@ const BladeDef kDefs[kBlades] = {
 // ------------------------------------------------------------ subpaineis
 
 struct DetailRow {
+    std::string gameId;  // linha de jogo da biblioteca (A abre os detalhes)
     Icon icon = Icon::Info;
     std::string title, sub, desc;
     float progress = -1;  // 0..1 desenha barra
@@ -115,6 +116,9 @@ Detail buildDetail(int blade, int item, Context* ctx) {
     };
     auto gameRow = [&d](const DemoGame& g, const std::string& sub, float prog) {
         DetailRow r;
+        int nn = 0;
+        const DemoGame* base = demoGames(nn);
+        if (base && &g >= base && &g < base + nn) r.gameId = libraryGameId(int(&g - base));
         r.icon = g.arcade ? Icon::Star : Icon::Controller;
         r.title = g.title;
         r.sub = sub;
@@ -129,11 +133,11 @@ Detail buildDetail(int blade, int item, Context* ctx) {
     if (blade == 0) {
         switch (item) {
             case 0:
-                row(Icon::Person, p.gamertag, "Nome do jogador (local)");
-                row(Icon::Trophy, std::to_string(p.points) + " pontos", "Pontuação de demonstração");
+                row(Icon::Person, p.gamertag, p.real ? "Perfil conectado (somente leitura)" : "Sem perfil conectado");
+                row(Icon::Trophy, profilePointsText(p), "Gamerscore");
                 row(Icon::Mail, p.motto, "Lema");
                 row(Icon::Globe, p.zone, "Zona de jogo");
-                d.note = "Perfil fictício local. Nenhuma conta online é usada.";
+                d.note = p.real ? "Somente o nome do perfil é lido. Nada do perfil é alterado." : "Entre com um perfil pelo Guia do Xbox.";
                 break;
             case 1: {
                 const DemoFriend* f = demoFriends(n);
@@ -152,8 +156,8 @@ Detail buildDetail(int blade, int item, Context* ctx) {
                 if (item == 3) {
                     const DemoGame* g = demoGames(n);
                     for (int i = 0; i < n; ++i)
-                        gameRow(g[i], std::to_string(g[i].points) + " de " + std::to_string(g[i].maxPoints) + " pontos",
-                                float(g[i].points) / g[i].maxPoints);
+                        gameRow(g[i], std::string("conquistas não lidas pelo Neutro X"),
+                                -1.0f);
                 } else if (item == 4) {
                     row(Icon::Download, "Nenhum download na fila", "Modo offline");
                 } else {
@@ -161,7 +165,7 @@ Detail buildDetail(int blade, int item, Context* ctx) {
                     row(Icon::Person, "Presença", "Invisível");
                     row(Icon::Friends, "Privacidade", "Somente amigos (visual)");
                 }
-                d.note = item == 3 ? "Conquistas de demonstração." : "Representação visual. Nenhuma configuração é alterada.";
+                d.note = item == 3 ? "O Neutro X não lê conquistas do perfil." : "Representação visual. Nenhuma configuração é alterada.";
                 break;
         }
     } else if (blade == 1) {
@@ -169,26 +173,26 @@ Detail buildDetail(int blade, int item, Context* ctx) {
         switch (item) {
             case 0:
                 for (int i = 0; i < n; ++i) gameRow(g[i], std::string(g[i].genre) + " · " + g[i].year, -1);
-                d.note = "Jogos de demonstração: abrem apenas telas informativas.";
+                d.note = "Biblioteca real (A: detalhes e Jogar).";
                 break;
             case 1:
                 for (int i = 0; i < n; ++i)
                     if (g[i].arcade) gameRow(g[i], std::string("Arcade · ") + g[i].genre, -1);
-                d.note = "Títulos arcade de demonstração.";
+                d.note = "Títulos XBLA da biblioteca.";
                 break;
             case 2:
-                for (int i = 0; i < 3 && i < n; ++i) gameRow(g[i], "Trailer de demonstração · 1:00", -1);
+                row(Icon::Video, "Nenhuma demonstração", "O Neutro X não baixa demos nem trailers");
                 d.note = "Vitrine local; nada é transmitido.";
                 break;
             case 3:
                 for (int i = 0; i < n; ++i)
-                    gameRow(g[i], std::to_string(g[i].points) + " / " + std::to_string(g[i].maxPoints) + " pontos",
-                            float(g[i].points) / g[i].maxPoints);
-                d.note = "Pontos de demonstração.";
+                    gameRow(g[i], std::string("conquistas não lidas pelo Neutro X"),
+                            -1.0f);
+                d.note = "O Neutro X não lê conquistas do perfil.";
                 break;
             case 4:
-                for (int i = 0; i < 4 && i < n; ++i) gameRow(g[i], i == 0 ? "Hoje" : "Esta semana", -1);
-                d.note = "Histórico de demonstração.";
+                for (int i = 0; i < 4 && i < n; ++i) gameRow(g[i], "Na sua biblioteca", -1);
+                d.note = "Jogos da biblioteca.";
                 break;
         }
     } else if (blade == 2) {
@@ -247,7 +251,7 @@ Detail buildDetail(int blade, int item, Context* ctx) {
                 break;
         }
     }
-    if (d.rows.empty()) row(Icon::Info, "Sem itens", "Demonstração");
+    if (d.rows.empty()) row(Icon::Info, "Sem itens", blade == 1 ? "Nenhum jogo: adicione pastas em Configurações > Jogos" : "Vazio");
     return d;
 }
 
@@ -722,6 +726,10 @@ private:
                     ctx.sfx(Sfx::Confirm);
                     ctx.app->openSettings();
                     break;
+                case Act::OpenLibrary:
+                    ctx.sfx(Sfx::Confirm);
+                    ctx.app->openLibrary();
+                    break;
                 case Act::OpenAbout:
                     ctx.sfx(Sfx::Confirm);
                     ctx.app->openAbout();
@@ -755,8 +763,13 @@ private:
         }
         if (in.press(Button::A) && n > 0) {
             const DetailRow& row = st_.detail.rows[size_t(st_.detailSel)];
-            ctx.sfx(Sfx::Open, 0.8f);
-            ctx.app->toast(row.title + ": item de demonstração (somente informativo)");
+            if (!row.gameId.empty()) {
+                ctx.sfx(Sfx::Confirm);
+                ctx.app->openGameDetails(row.gameId);
+            } else {
+                ctx.sfx(Sfx::Open, 0.8f);
+                ctx.app->toast(row.title + ": item de demonstração (somente informativo)");
+            }
         }
         if (in.press(Button::Y)) openOptions(ctx);
         if (in.press(Button::B) || in.press(Button::Left)) {

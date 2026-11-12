@@ -289,17 +289,33 @@ float StrokeFont::advance(uint32_t cp, float pixelSize, FontWeight weight) {
 void StrokeFont::clearCache() {
     cache_.clear();
     cacheBytes_ = 0;
+    clearPending_ = false;
+}
+
+uint64_t StrokeFont::key(uint32_t cp, float pixelSize, FontWeight weight, int* sizeKeyOut) {
+    int sizeKey = int(pixelSize * 2.0f + 0.5f);  // quantiza em meio pixel
+    if (sizeKey < 2) sizeKey = 2;
+    if (sizeKeyOut) *sizeKeyOut = sizeKey;
+    return (uint64_t(cp) << 24) | (uint64_t(sizeKey & 0xFFFFF) << 2) | uint64_t(int(weight) & 3);
+}
+
+const GlyphBitmap* StrokeFont::findGlyph(uint32_t cp, float pixelSize, FontWeight weight) const {
+    auto it = cache_.find(key(cp, pixelSize, weight, nullptr));
+    return it == cache_.end() ? nullptr : &it->second;
 }
 
 const GlyphBitmap& StrokeFont::glyph(uint32_t cp, float pixelSize, FontWeight weight) {
-    int sizeKey = int(pixelSize * 2.0f + 0.5f);  // quantiza em meio pixel
-    if (sizeKey < 2) sizeKey = 2;
-    uint64_t key = (uint64_t(cp) << 24) | (uint64_t(sizeKey & 0xFFFFF) << 2) | uint64_t(int(weight) & 3);
-    auto it = cache_.find(key);
+    int sizeKey = 2;
+    const uint64_t k = key(cp, pixelSize, weight, &sizeKey);
+    auto it = cache_.find(k);
     if (it != cache_.end()) return it->second;
 
-    // Limite simples de memoria do cache de glifos (~8 MB).
-    if (cacheBytes_ > 8u * 1024u * 1024u) clearCache();
+    // Limite simples de memoria do cache de glifos (~8 MB). Esvaziar no meio de um
+    // quadro invalidaria glifos ja usados: so marca, e collect() limpa no proximo quadro.
+    if (cacheBytes_ > 8u * 1024u * 1024u) {
+        if (pins_ == 0) clearCache();
+        else clearPending_ = true;
+    }
 
     const float px = sizeKey * 0.5f;
     const float s = px / 16.0f;
@@ -358,7 +374,7 @@ const GlyphBitmap& StrokeFont::glyph(uint32_t cp, float pixelSize, FontWeight we
         }
     }
     cacheBytes_ += g.alpha.size() + sizeof(GlyphBitmap);
-    return cache_.emplace(key, std::move(g)).first->second;
+    return cache_.emplace(k, std::move(g)).first->second;
 }
 
 }  // namespace nx

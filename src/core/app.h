@@ -1,22 +1,38 @@
 // Neutro X - aplicacao: loop principal, pilha de telas, troca de dashboards.
 #pragma once
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include "core/anim.h"
 #include "core/screen.h"
 #include "dashboards/dashboard.h"
+#include "library/covers.h"
+#include "library/library.h"
+#include "platform/platform.h"
+#include "system/launcher.h"
 
 namespace nx {
 
-constexpr const char* kNeutroXVersion = "0.8.0";
+constexpr const char* kNeutroXVersion = "0.9.0";
 
 struct FrameStats {
     uint64_t frames = 0;
     float fps = 0;
-    float frameMs = 0;      // tempo de CPU do ultimo quadro (update+render)
+    float frameMs = 0;      // tempo de CPU do ultimo quadro (update+render+apresentacao)
     float worstFrameMs = 0;
+    // Instrumentacao: partes do ultimo quadro (ms).
+    float updateMs = 0;     // entrada + logica + acoes adiadas (carregamentos entram aqui)
+    float renderMs = 0;     // desenho (gravacao + rasterizacao)
+    float presentMs = 0;    // envio a tela (no console inclui a espera do vblank)
+    uint64_t slowFrames = 0;  // quadros acima de 33 ms (abaixo de 30 FPS)
+};
+
+// Tempo por tela (para achar onde ocorrem as travadas).
+struct ScreenTiming {
+    uint64_t frames = 0, slow = 0;
+    double sumMs = 0, maxMs = 0, maxUpdateMs = 0, maxRenderMs = 0;
 };
 
 class App {
@@ -43,6 +59,42 @@ public:
     void openAbout();
     void requestQuit();
     bool quitRequested() const { return quit_; }
+    // Saida controlada: Aurora / dashboard oficial / saida padrao do sistema.
+    // Retorna false (com o motivo em 'why') se o destino nao estiver disponivel; nada e encerrado.
+    bool requestExitTo(ExitTarget t, std::string* why = nullptr);
+    LaunchTarget exitTargetInfo(ExitTarget t);
+    // Iniciar outro titulo (.xex) ao encerrar. false se a plataforma nao suportar ou o arquivo nao existir.
+    bool requestLaunchTitle(const std::string& path, std::string* why = nullptr);
+    // Caminho a iniciar depois do encerramento (vazio = saida padrao do sistema).
+    const std::string& launchOnExit() const { return launchOnExit_; }
+    std::vector<StorageRoot> storageRoots();
+    // Mesmas unidades, consultadas no maximo a cada 5 s (para telas que desenham caminhos).
+    const std::vector<StorageRoot>& storageRootsCached();
+    // Perfil conectado (consultado a cada 2 s); 'profileVersion' muda quando o perfil muda.
+    const UserProfile& profile() const { return profile_; }
+    unsigned profileVersion() const { return profileVersion_; }
+    void refreshProfile();
+    const std::map<std::string, ScreenTiming>& screenTimings() const { return timings_; }
+
+    // --- Biblioteca de jogos (Meus Jogos)
+    Library& library() { return lib_; }
+    void saveLibrary(bool force = false);
+    bool startLibraryScan(bool manual);
+    bool libraryScanning() const { return scanner_.running(); }
+    std::string libraryScanProgress() { return scanner_.progress(); }
+    int libraryScanFolders() { return scanner_.foldersVisited(); }
+    void openLibrary();
+    void openGameDetails(const std::string& gameId);
+    void openLibrarySettings();
+    // Interface cuja aparencia a biblioteca usa (a ativa ou a ultima aberta; Count = Neutro X).
+    DashboardId libraryStyle() const;
+    CoverService& coverService() { return coverSvc_; }
+    CoverTextures& coverTextures() { return coverTex_; }
+    // Pede a capa (XboxUnity). manual: mostra o resultado; force: baixa de novo.
+    void requestCover(const std::string& gameId, bool force, bool manual);
+    int importCovers();  // de capas_importar/; retorna quantas foram aplicadas
+    // Inicia um jogo da biblioteca (valida caminho/tipo; encerra o Neutro X).
+    bool launchGame(const std::string& gameId, std::string* why);
 
     // --- Utilidades ---
     Context& ctx() { return ctx_; }
@@ -103,6 +155,27 @@ private:
     FrameStats stats_;
     float fpsAccum_ = 0;
     int fpsFrames_ = 0;
+    std::string launchOnExit_;
+    UserProfile profile_;
+    unsigned profileVersion_ = 0;
+    float profileTimer_ = 0;
+    float audioCheckTimer_ = 0;
+    uint32_t loggedMutes_[kSoundThemeCount] = {};
+    std::map<std::string, ScreenTiming> timings_;
+    double lastSpikeLog_ = -10;
+    void checkAudioDiagnostics();
+    void logTimings();
+    void pollLibrary(float dt);
+    void publishLibrary();
+    Library lib_;
+    LibraryScanner scanner_;
+    bool scanManual_ = false;
+    CoverService coverSvc_;
+    CoverTextures coverTex_;
+    float libSaveTimer_ = 0;
+    DashboardId lastDash_ = DashboardId::Count;
+    std::vector<StorageRoot> rootsCache_;
+    double rootsAt_ = -100;
 };
 
 }  // namespace nx

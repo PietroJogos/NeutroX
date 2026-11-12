@@ -57,7 +57,24 @@ constexpr int kAudioRate = 44100;
 // Somente o conjunto do dashboard ativo fica na memoria: ao trocar de
 // dashboard o conjunto anterior e descarregado e o novo e carregado.
 // ------------------------------------------------------------------------
-enum class SoundSource : int { Originals = 0, Recreated = 1 };
+// OriginalsWithRecreated: originais onde existirem e recriados SOMENTE nos efeitos
+// sem original - opcao explicita do usuario (nunca aplicada automaticamente).
+enum class SoundSource : int { Originals = 0, Recreated = 1, OriginalsWithRecreated = 2 };
+
+// Contadores de reproducao (diagnostico: distinguir som ausente de falha de saida).
+struct MixerStats {
+    uint64_t requests = 0;          // pedidos de efeito
+    uint64_t started = 0;           // vozes iniciadas (algo foi para o mixer)
+    uint64_t mutedMissing = 0;      // pedidos mudos: original ausente com fonte "Originais"
+    uint64_t mutedNotResident = 0;  // pedidos mudos: conjunto do tema ainda nao carregado
+    uint64_t recreatedFallback = 0; // pedidos atendidos por recriado (modo originais + recriados)
+    uint64_t framesMixed = 0;       // amostras estereo produzidas pelo mixer
+    uint64_t nonSilentFrames = 0;   // amostras com sinal (|x| > 0)
+    int peak = 0;                   // pico absoluto desde o inicio
+    int lastVoices = 0;
+    // Efeitos que ja ficaram mudos ao menos uma vez (bit = Sfx), por tema.
+    uint32_t mutedMask[6] = {};
+};
 
 enum class OrigStatus : int { Loaded, Missing, Unsupported, Invalid };
 
@@ -106,6 +123,7 @@ public:
     OrigReport originalsReport();
     void play(Sfx s, float volume = 1.0f, float pitch = 1.0f);                // tema atual
     void playThemed(SoundTheme t, Sfx s, float volume = 1.0f, float pitch = 1.0f);
+    MixerStats stats();
     void setMasterVolume(float v);  // 0..1
     float masterVolume() const { return master_; }
     // Mistura 'frames' amostras estereo intercaladas (L, R) em int16.
@@ -133,6 +151,7 @@ private:
     std::vector<Voice> voices_;
     std::mutex mtx_;
     float master_ = 0.8f;
+    MixerStats stats_;
     SoundTheme theme_ = SoundTheme::NeutroX;
     SoundSource source_ = SoundSource::Originals;
 };
@@ -148,6 +167,9 @@ public:
     virtual void setSource(SoundSource s) = 0;
     virtual void loadOriginals(const std::string& baseDir) = 0;
     virtual OrigReport originalsReport() = 0;
+    virtual MixerStats stats() { return {}; }
+    // Toca um efeito de um tema especifico sem trocar o tema ativo (teste de som).
+    virtual void playThemed(SoundTheme t, Sfx s, float volume = 1.0f) { (void)t; play(s, volume, 1.0f); }
 };
 
 // Implementacao baseada no Mixer (a plataforma consome as amostras).
@@ -161,6 +183,8 @@ public:
     void setSource(SoundSource s) override { m_.setSource(s); }
     void loadOriginals(const std::string& baseDir) override { m_.loadOriginals(baseDir); }
     OrigReport originalsReport() override { return m_.originalsReport(); }
+    MixerStats stats() override { return m_.stats(); }
+    void playThemed(SoundTheme t, Sfx s, float volume) override { m_.playThemed(t, s, volume, 1.0f); }
 
 private:
     Mixer& m_;

@@ -49,8 +49,9 @@ std::vector<NxeChannel> buildChannels() {
     ch[1].name = "Biblioteca de Jogos";
     int n = 0;
     const DemoGame* g = demoGames(n);
-    for (int i = 0; i < n; ++i) ch[1].cards.push_back({g[i].arcade ? Icon::Star : Icon::Controller, g[i].title, Kind::Game, i});
-    ch[1].cards.push_back({Icon::List, "Todos os Jogos", Kind::Generic, 10});
+    // Jogos REAIS da biblioteca (retrato publicado ao abrir a interface).
+    for (int i = 0; i < n && i < 24; ++i) ch[1].cards.push_back({g[i].arcade ? Icon::Star : Icon::Controller, g[i].title, Kind::Game, i});
+    ch[1].cards.push_back({Icon::List, n ? "Meus Jogos" : "Meus Jogos (nenhum jogo ainda)", Kind::Generic, 10});
     ch[2].name = "Mídia";
     ch[2].cards = {{Icon::Music, "Música", Kind::Generic, 20}, {Icon::Video, "Vídeos", Kind::Generic, 21},
                    {Icon::Picture, "Imagens", Kind::Generic, 22}, {Icon::Disc, "Disco", Kind::Generic, 23}};
@@ -62,7 +63,13 @@ std::vector<NxeChannel> buildChannels() {
 }
 
 const std::vector<NxeChannel>& channels() {
-    static const std::vector<NxeChannel> ch = buildChannels();
+    // Refeita quando a biblioteca publicada muda (so entre aberturas de interface).
+    static std::vector<NxeChannel> ch;
+    static unsigned ver = 0;
+    if (ver != libraryGamesVersion()) {
+        ch = buildChannels();
+        ver = libraryGamesVersion();
+    }
     return ch;
 }
 
@@ -129,28 +136,33 @@ Panel buildPanel(const NxeCard& card, Context* ctx) {
     const DemoProfile& prof = demoProfile();
     switch (card.kind) {
         case Kind::Profile:
-            p.rows.push_back(mkRow(Icon::Person, prof.gamertag, "Nome do jogador (local)", "Perfil fictício local. Nenhuma conta online é usada."));
-            p.rows.push_back(mkRow(Icon::Trophy, std::to_string(prof.points) + " pontos", "Pontuação de demonstração"));
+            p.rows.push_back(mkRow(Icon::Person, prof.gamertag, prof.real ? "Perfil conectado no console" : "Sem perfil conectado",
+                                   "Somente o nome do perfil é lido (XAM). Nenhum arquivo do perfil é alterado."));
+            p.rows.push_back(mkRow(Icon::Trophy, profilePointsText(prof), "Gamerscore"));
             p.rows.push_back(mkRow(Icon::Mail, prof.motto, "Lema"));
             p.rows.push_back(mkRow(Icon::Globe, prof.zone, "Zona de jogo"));
-            p.note = "Perfil local de demonstração.";
+            p.note = prof.real ? "Perfil real (somente leitura)." : "Conecte um perfil pelo Guia do Xbox.";
             return p;
         case Kind::Game: {
+            if (card.index < 0 || card.index >= n) return p;
             const DemoGame& gm = g[card.index];
-            InfoRow play = gameRow(gm, "Jogo de demonstração (não executável)", -1);
+            InfoRow play = gameRow(gm, "Detalhes, capa e Jogar", -1);
+            play.gameId = libraryGameId(card.index);
             play.icon = int(Icon::Controller);
             play.title = "Jogar";
             play.action = kRowPlay;
             p.rows.push_back(play);
-            p.rows.push_back(gameRow(gm, std::to_string(gm.points) + " de " + std::to_string(gm.maxPoints) + " pontos",
-                                     float(gm.points) / gm.maxPoints));
+            p.rows.push_back(gameRow(gm, std::string("conquistas não lidas pelo Neutro X"),
+                                     -1.0f));
             p.rows.back().title = "Conquistas";
             p.rows.back().icon = int(Icon::Trophy);
             InfoRow det = gameRow(gm, std::string(gm.genre) + " · " + gm.year, -1);
             det.title = "Detalhes";
             det.icon = int(Icon::Info);
+            det.action = kRowPlay;
+            det.gameId = play.gameId;
             p.rows.push_back(det);
-            p.note = "Jogos de demonstração abrem apenas telas informativas.";
+            p.note = "Jogo da sua biblioteca (Meus Jogos).";
             return p;
         }
         default:
@@ -166,9 +178,9 @@ Panel buildPanel(const NxeCard& card, Context* ctx) {
         }
         case 2:
             for (int i = 0; i < n; ++i)
-                p.rows.push_back(gameRow(g[i], std::to_string(g[i].points) + " / " + std::to_string(g[i].maxPoints) + " pontos",
-                                         float(g[i].points) / g[i].maxPoints));
-            p.note = "Conquistas de demonstração.";
+                p.rows.push_back(gameRow(g[i], std::string("conquistas não lidas pelo Neutro X"),
+                                         -1.0f));
+            p.note = "O Neutro X não lê conquistas do perfil.";
             break;
         case 3:
             p.rows.push_back(mkRow(Icon::Mail, "Bem-vindo ao Neutro X", "Mensagem do sistema · lida",
@@ -186,12 +198,21 @@ Panel buildPanel(const NxeCard& card, Context* ctx) {
             p.note = "Avatar genérico próprio (sem serviço online de avatares).";
             break;
         case 5:
-            for (int i = 0; i < 4 && i < n; ++i) p.rows.push_back(gameRow(g[i], i == 0 ? "Jogado hoje" : "Jogado esta semana", -1));
-            p.note = "Atividade de demonstração.";
+            for (int i = 0; i < 4 && i < n; ++i) {
+                p.rows.push_back(gameRow(g[i], "Na sua biblioteca", -1));
+                p.rows.back().action = kRowPlay;
+                p.rows.back().gameId = libraryGameId(i);
+            }
+            if (!n) p.rows.push_back(mkRow(Icon::Info, "Nenhum jogo na biblioteca", "Adicione pastas em Configurações > Jogos"));
+            p.note = "Jogos da biblioteca.";
             break;
         case 10:
-            for (int i = 0; i < n; ++i) p.rows.push_back(gameRow(g[i], std::string(g[i].genre) + " · " + g[i].year, -1));
-            p.note = "Biblioteca de demonstração.";
+            for (int i = 0; i < n; ++i) {
+                p.rows.push_back(gameRow(g[i], std::string(g[i].genre) + " · " + g[i].year, -1));
+                p.rows.back().action = kRowPlay;
+                p.rows.back().gameId = libraryGameId(i);
+            }
+            p.note = "Biblioteca real.";
             break;
         case 20:
         case 21:
@@ -306,9 +327,14 @@ void drawCard(IRenderer& r, const NxeCard& c, const Slot& s, const NxeTheme& t) 
     r.fillRoundRect(rc.offset(3, 6), 7, Color(0, 0, 0, 40));
     if (c.kind == Kind::Game) {
         int n = 0;
-        const DemoGame& g = demoGames(n)[c.index];
-        r.fillRoundRect(rc, 7, g.c2);
-        drawAbstractArt(r, rc.inset(2), g.artSeed, g.c1, g.c2);
+        const DemoGame* gl = demoGames(n);
+        if (c.index >= 0 && c.index < n) {
+            const DemoGame& g = gl[c.index];
+            r.fillRoundRect(rc, 7, g.c2);
+            drawAbstractArt(r, rc.inset(2), g.artSeed, g.c1, g.c2);
+        } else {
+            r.fillRoundRect(rc, 7, t.cardBottom);
+        }
     } else {
         r.fillRoundRect(rc, 7, t.cardBottom);
         r.pushClip(rc.inset(1));
@@ -324,7 +350,7 @@ void drawCard(IRenderer& r, const NxeCard& c, const Slot& s, const NxeTheme& t) 
         ps.size = 34 * k;
         ps.color = Color(255, 255, 255);
         r.drawText(p.gamertag, rc.x + 20 * k, rc.y + 22 * k, ps);
-        std::string pts = std::to_string(p.points) + " P";
+        std::string pts = profilePointsText(p, true);
         r.drawText(pts.c_str(), rc.x + 20 * k, rc.y + 62 * k, ps);
         ps.size = 22 * k;
         r.drawText("Jogados recentemente", rc.x + 20 * k, rc.y + 160 * k, ps);
@@ -479,7 +505,7 @@ void renderNxeStatic(IRenderer& r, const NxeState& st, TextureId bg) {
     tag.align = Align::Right;
     tag.color = Color(255, 255, 255);
     r.drawText(p.gamertag, 1150, 26, tag);
-    std::string pts = std::to_string(p.points) + " P";
+    std::string pts = profilePointsText(p, true);
     r.drawText(pts.c_str(), 1150, 58, tag);
     tag.size = 16;
     tag.color = Color(255, 255, 255, 210);
@@ -730,6 +756,7 @@ private:
         if (in.press(Button::A)) {
             const NxeCard& card = ch[size_t(c)].cards[size_t(st_.card[c])];
             if (card.kind == Kind::OpenSettings) { ctx.sfx(Sfx::Confirm); ctx.app->openSettings(); }
+            else if (card.kind == Kind::Generic && card.index == 10) { ctx.sfx(Sfx::Confirm); ctx.app->openLibrary(); }
             else if (card.kind == Kind::OpenAbout) { ctx.sfx(Sfx::Confirm); ctx.app->openAbout(); }
             else {
                 st_.panel = buildPanel(card, &ctx);
@@ -773,9 +800,9 @@ private:
                 st_.shirt = row.action - kRowShirt; saveOptions(ctx);
                 ctx.sfx(Sfx::Confirm);
                 ctx.app->toast(std::string("Avatar: ") + row.title);
-            } else if (row.action == kRowPlay) {
-                ctx.sfx(Sfx::Error, 0.7f);
-                ctx.app->toast("Jogos de demonstração não são executados pelo Neutro X");
+            } else if (row.action == kRowPlay && !row.gameId.empty()) {
+                ctx.sfx(Sfx::Confirm);
+                ctx.app->openGameDetails(row.gameId);
             } else {
                 ctx.sfx(Sfx::Open, 0.8f);
                 ctx.app->toast(row.title + ": item de demonstração (somente informativo)");

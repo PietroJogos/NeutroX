@@ -13,6 +13,8 @@ namespace {
 
 // ------------------------------------------------------------- Abertura
 
+std::string fitText(IRenderer& r, const std::string& s, const TextStyle& st, float maxW);
+
 class BootScreen : public Screen {
 public:
     const char* name() const override { return "Boot"; }
@@ -66,7 +68,7 @@ private:
 
 // -------------------------------------------------------- Configuracoes
 
-enum class Row { DefaultDash, Volume, SoundSource, SoundStatus, Anim, AnimIntensity, Accent, Language, ShowFps, Restore, Version, Count };
+enum class Row { DefaultDash, Games, Volume, SoundSource, SoundStatus, Anim, AnimIntensity, Accent, Language, ShowFps, Restore, Version, Count };
 
 class SettingsScreen : public Screen {
 public:
@@ -78,7 +80,7 @@ public:
     }
     void onExit(Context& ctx) override { backdrop_.release(ctx); }
 
-    static float rowY(int i) { return 132.0f + i * 45.0f; }
+    static float rowY(int i) { return 124.0f + i * 42.0f; }
 
     void update(Context& ctx, const InputFrame& in, float dt) override {
         enter_.update(dt);
@@ -86,6 +88,8 @@ public:
         {
             int total = ctx.audio->originalsReport().totalLoaded();
             soundSummary_ = std::to_string(total) + " de " + std::to_string((kSoundThemeCount - 1) * kSfxCount) + " carregados";
+            gamesSummary_ = std::to_string(ctx.app->library().folders().size()) + " pastas · " +
+                            std::to_string(ctx.app->library().view(Library::Filter::All).size()) + " jogos";
         }
         const int n = int(Row::Count);
         int before = sel_;
@@ -110,6 +114,9 @@ public:
             } else if (row == Row::SoundStatus) {
                 ctx.sfx(Sfx::Open);
                 ctx.app->openSoundStatus();
+            } else if (row == Row::Games) {
+                ctx.sfx(Sfx::Open);
+                ctx.app->openLibrarySettings();
             } else if (row == Row::Anim || row == Row::ShowFps) {
                 change(ctx, row, 1);
             } else if (row == Row::Version || row == Row::Language) {
@@ -142,7 +149,7 @@ public:
             case Row::Volume:
                 s.sfxVolume = clampi(s.sfxVolume + delta * 10, 0, 100);
                 break;
-            case Row::SoundSource: s.dashboardSounds = s.dashboardSounds == 0 ? 1 : 0; break;
+            case Row::SoundSource: s.dashboardSounds = (s.dashboardSounds + delta + 3) % 3; break;
             case Row::Anim: s.animations = !s.animations; break;
             case Row::AnimIntensity: s.animIntensity = AnimIntensity(clampi(int(s.animIntensity) + delta, 0, 2)); break;
             case Row::Accent: s.accentTheme = (s.accentTheme + delta + kAccentThemeCount) % kAccentThemeCount; break;
@@ -160,8 +167,12 @@ public:
                 return d ? d->name : "Menu do Neutro X";
             }
             case Row::Volume: return std::to_string(s.sfxVolume) + "%";
-            case Row::SoundSource: return s.dashboardSounds == 0 ? "Originais (pasta local)" : "Recriados pelo Neutro X";
+            case Row::SoundSource:
+                return s.dashboardSounds == 0   ? "Originais (pasta local)"
+                       : s.dashboardSounds == 1 ? "Recriados pelo Neutro X"
+                                                : "Originais + recriados nos ausentes";
             case Row::SoundStatus: return soundSummary_;
+            case Row::Games: return gamesSummary_;
             case Row::Anim: return s.animations ? "Ativadas" : "Desativadas";
             case Row::AnimIntensity:
                 return s.animIntensity == AnimIntensity::Low ? "Baixa" : s.animIntensity == AnimIntensity::High ? "Alta" : "Média";
@@ -187,7 +198,7 @@ public:
         r.drawText("Configurações", 124, 56, t);
         drawClock(ctx, r, 1224, 40, Color(220, 226, 234));
 
-        static const char* const labels[] = {"Dashboard padrão", "Volume dos efeitos", "Sons dos dashboards", "Sons originais: estado", "Animações", "Intensidade das animações",
+        static const char* const labels[] = {"Dashboard padrão", "Jogos: gerenciar pastas", "Volume dos efeitos", "Sons dos dashboards", "Sons originais: estado", "Animações", "Intensidade das animações",
                                              "Tema de cores", "Idioma", "Mostrar FPS", "Restaurar configurações padrão",
                                              "Versão"};
         Rectf hl{60, hl_.value - 2, 1160, 42};
@@ -210,7 +221,8 @@ public:
             vs.align = Align::Right;
             vs.color = sel ? Color(255, 255, 255) : Color(160, 170, 182);
             Row row = Row(i);
-            bool adjustable = row != Row::Restore && row != Row::Version && row != Row::Language && row != Row::SoundStatus;
+            bool adjustable = row != Row::Restore && row != Row::Version && row != Row::Language && row != Row::SoundStatus &&
+                              row != Row::Games;
             float rx = 1190;
             if (adjustable && sel) {
                 TextStyle ar = vs;
@@ -255,7 +267,7 @@ private:
     int sel_ = 0;
     Smooth hl_{0, 18};
     Tween enter_;
-    std::string soundSummary_;
+    std::string soundSummary_, gamesSummary_;
 };
 
 // ----------------------------------------------------------------- Sobre
@@ -329,7 +341,7 @@ public:
     void update(Context& ctx, const InputFrame& in, float dt) override {
         open_.update(dt);
         hl_.update(dt);
-        int n = switching_ ? kDashboardCount : 5;
+        int n = switching_ ? kDashboardCount : 6;
         int before = sel_;
         if (in.press(Button::Down)) sel_ = (sel_ + 1) % n;
         if (in.press(Button::Up)) sel_ = (sel_ + n - 1) % n;
@@ -352,11 +364,11 @@ public:
             case 0: ctx.sfx(Sfx::Back); ctx.app->pop(); break;
             case 1: ctx.sfx(Sfx::Open); switching_ = true; sel_ = cur_; hl_.snap(float(sel_)); break;
             case 2: ctx.sfx(Sfx::Open); ctx.app->pop(); ctx.app->openSettings(); break;
-            case 3: ctx.sfx(Sfx::Confirm); ctx.app->openMainMenu(); break;
-            case 4:
+            case 3: ctx.sfx(Sfx::Open); ctx.app->pop(); ctx.app->openLibrary(); break;
+            case 4: ctx.sfx(Sfx::Confirm); ctx.app->openMainMenu(); break;
+            case 5:
                 ctx.sfx(Sfx::Open);
-                ctx.app->push(createConfirmDialog("Sair do Neutro X?", "O aplicativo será encerrado.",
-                                                  [](Context& c) { c.app->requestQuit(); }));
+                ctx.app->push(createExitDialog(ctx));
                 break;
         }
     }
@@ -380,10 +392,10 @@ public:
         Rectf hl{px - 14, y0 + hl_.value * itemH, w - 52, itemH - 8};
         r.fillRoundRect(hl, 8, accent.withAlpha(210));
         if (!switching_) {
-            static const char* const items[] = {"Continuar", "Trocar de dashboard", "Configurações", "Menu principal",
+            static const char* const items[] = {"Continuar", "Trocar de dashboard", "Configurações", "Meus Jogos", "Menu principal",
                                                 "Sair do Neutro X"};
-            static const Icon icons[] = {Icon::ArrowLeft, Icon::Apps, Icon::Gear, Icon::Home, Icon::Power};
-            for (int i = 0; i < 5; ++i) {
+            static const Icon icons[] = {Icon::ArrowLeft, Icon::Apps, Icon::Gear, Icon::Controller, Icon::Home, Icon::Power};
+            for (int i = 0; i < 6; ++i) {
                 float y = y0 + i * itemH;
                 Color c = i == sel_ ? Color(255, 255, 255) : Color(196, 204, 214);
                 drawIcon(r, icons[i], px + 16, y + 27, 26, c, i == sel_ ? accent : Color(14, 18, 24));
@@ -486,6 +498,91 @@ private:
     bool yes_ = false;  // padrao seguro: "Nao"
 };
 
+// --------------------------------------------------- Dialogo de opcoes
+
+class ChoiceDialog : public Screen {
+public:
+    ChoiceDialog(std::string title, std::string msg, std::vector<ChoiceOption> opts, std::function<void(Context&, int)> fn)
+        : title_(std::move(title)), msg_(std::move(msg)), opts_(std::move(opts)), fn_(std::move(fn)) {
+        // comeca na primeira opcao habilitada
+        for (size_t i = 0; i < opts_.size(); ++i)
+            if (opts_[i].enabled) { sel_ = int(i); break; }
+        hl_.snap(float(sel_));
+    }
+    const char* name() const override { return "ChoiceDialog"; }
+    bool isOverlay() const override { return true; }
+    void onEnter(Context&) override { open_.start(0.22f); }
+    void update(Context& ctx, const InputFrame& in, float dt) override {
+        open_.update(dt);
+        hl_.update(dt);
+        const int n = int(opts_.size());
+        if (n == 0) { ctx.app->pop(); return; }
+        int before = sel_;
+        if (in.press(Button::Down)) sel_ = (sel_ + 1) % n;
+        if (in.press(Button::Up)) sel_ = (sel_ + n - 1) % n;
+        if (sel_ != before) { ctx.sfx(Sfx::Navigate); hl_.set(float(sel_)); }
+        if (in.press(Button::B)) { ctx.sfx(Sfx::Back); ctx.app->pop(); return; }
+        if (in.press(Button::A)) {
+            if (!opts_[size_t(sel_)].enabled) {
+                ctx.sfx(Sfx::Error);
+                ctx.app->toast(opts_[size_t(sel_)].label + ": " + opts_[size_t(sel_)].detail);
+                return;
+            }
+            ctx.sfx(Sfx::Confirm);
+            ctx.app->pop();
+            if (fn_) fn_(ctx, sel_);
+        }
+    }
+    void render(Context& ctx, IRenderer& r) override {
+        const float p = open_.progress();
+        float e = ease::outBack(p);
+        r.fillRect(Rectf{0, 0, 1280, 720}, Color(0, 0, 0, uint8_t(160 * clampf(p * 2, 0, 1))));
+        const float rowH = 64;
+        const float h = 150 + rowH * float(opts_.size()) + 30;
+        Rectf box = Rectf{290, (720 - h) * 0.5f, 700, h}.scaledAboutCenter(0.9f + 0.1f * e);
+        r.pushAlpha(clampf(p * 2, 0, 1));
+        r.fillRoundRect(box.offset(0, 10), 16, Color(0, 0, 0, 120));
+        r.fillRoundRect(box, 16, Color(24, 30, 38));
+        r.strokeRoundRect(box, 16, 2, ctx.accent());
+        TextStyle t;
+        t.size = 32;
+        t.weight = FontWeight::Bold;
+        t.color = Color(255, 255, 255);
+        r.drawText(title_.c_str(), box.x + 36, box.y + 26, t);
+        TextStyle m;
+        m.size = 19;
+        m.color = Color(190, 198, 208);
+        drawWrapped(r, msg_.c_str(), box.x + 36, box.y + 76, box.w - 72, m, 26, 2);
+        const float y0 = box.y + 140;
+        r.fillRoundRect(Rectf{box.x + 24, y0 + hl_.value * rowH, box.w - 48, rowH - 8}, 10, ctx.accent().withAlpha(210));
+        for (size_t i = 0; i < opts_.size(); ++i) {
+            const ChoiceOption& o = opts_[i];
+            const float y = y0 + float(i) * rowH;
+            TextStyle ls;
+            ls.size = 23;
+            ls.weight = int(i) == sel_ ? FontWeight::Bold : FontWeight::Regular;
+            ls.color = o.enabled ? Color(255, 255, 255) : Color(150, 156, 164);
+            r.drawText(o.label.c_str(), box.x + 44, y + 7, ls);
+            if (!o.detail.empty()) {
+                TextStyle ds;
+                ds.size = 15;
+                ds.color = int(i) == sel_ ? Color(230, 236, 242) : Color(140, 150, 162);
+                std::string d = fitText(r, o.detail, ds, box.w - 100);
+                r.drawText(d.c_str(), box.x + 45, y + 35, ds);
+            }
+        }
+        r.popAlpha();
+    }
+
+private:
+    std::string title_, msg_;
+    std::vector<ChoiceOption> opts_;
+    std::function<void(Context&, int)> fn_;
+    Tween open_;
+    Smooth hl_{0, 22};
+    int sel_ = 0;
+};
+
 // Corta o texto (por codepoint UTF-8) para caber em maxW, terminando com reticencias.
 std::string fitText(IRenderer& r, const std::string& s, const TextStyle& st, float maxW) {
     if (r.measureText(s.c_str(), st) <= maxW) return s;
@@ -522,6 +619,13 @@ public:
             ctx.sfx(Sfx::Confirm);
             ctx.app->toast("Pasta de sons originais verificada novamente");
         }
+        if (in.press(Button::X)) {
+            // Teste da SAIDA: tom proprio do Neutro X (independe de arquivos).
+            ctx.audio->playThemed(SoundTheme::NeutroX, Sfx::Confirm, 1.0f);
+            testAt_ = ctx.time;
+            statsAtTest_ = ctx.audio->stats();
+            ctx.app->toast("Tocando o tom de teste do Neutro X");
+        }
         if (in.press(Button::A)) {
             // Testa um efeito do tema selecionado com a fonte atual.
             SoundTheme t = soundThemeFor(DashboardId(sel_));
@@ -548,9 +652,40 @@ public:
         std::string p = "Pasta local (fora do repositório): " + rep_.baseDir;
         r.drawText(p.c_str(), 124, 104, note);
         const char* src = ctx.settings->dashboardSounds == 0
-                              ? "Fonte atual: ORIGINAIS. Efeitos ausentes ficam mudos (sem substituição automática)."
-                              : "Fonte atual: RECRIADOS pelo Neutro X (escolhida em Configurações).";
+                              ? "Fonte: ORIGINAIS. Efeitos ausentes ficam mudos (sem substituição automática)."
+                          : ctx.settings->dashboardSounds == 1
+                              ? "Fonte: RECRIADOS pelo Neutro X (escolhida em Configurações)."
+                              : "Fonte: ORIGINAIS + RECRIADOS só nos efeitos sem original (escolhida em Configurações).";
         r.drawText(src, 124, 126, note);
+        {
+            // Diagnostico: dispositivo -> mixer -> pedidos. Distingue saida fechada, arquivo ausente e erro.
+            const AudioDeviceStatus as = ctx.platform->audioStatus();
+            const MixerStats ms = ctx.audio->stats();
+            std::string dev = !as.present ? "Saída: sem dispositivo" : (as.open ? "Saída: aberta" : "Saída: FECHADA") +
+                                                                           std::string(" (") + as.detail + ")";
+            char b[200];
+            std::snprintf(b, sizeof b, "  ·  pedidos %llu, tocados %llu, mudos %llu  ·  pico %d",
+                          (unsigned long long)ms.requests, (unsigned long long)ms.started,
+                          (unsigned long long)(ms.mutedMissing + ms.mutedNotResident), ms.peak);
+            dev += b;
+            TextStyle ds = note;
+            ds.color = as.open ? Color(150, 200, 160) : Color(240, 150, 130);
+            dev = fitText(r, dev, ds, 1100);
+            r.drawText(dev.c_str(), 124, 646, ds);
+            if (testAt_ >= 0 && ctx.time - testAt_ < 4.0) {
+                // Resultado do ultimo teste de saida
+                const bool mixed = ms.nonSilentFrames > statsAtTest_.nonSilentFrames;
+                const bool delivered = as.framesPlayed > 0;
+                std::string res = !as.open    ? "Teste: dispositivo de áudio fechado — o som não pode sair (veja o log)."
+                                  : !mixed    ? "Teste: o mixer ainda não produziu amostras do tom."
+                                  : delivered ? "Teste: tom misturado e entregue ao sistema. Se não ouviu, confira volume/TV/HDMI."
+                                              : "Teste: tom misturado, mas nenhum quadro entregue ao sistema.";
+                TextStyle rs = note;
+                rs.weight = FontWeight::Bold;
+                rs.color = Color(240, 220, 140);
+                r.drawText(fitText(r, res, rs, 1100).c_str(), 124, 624, rs);
+            }
+        }
         int totalFiles = 0;
         for (int ti = 1; ti < kSoundThemeCount; ++ti) totalFiles += rep_.filesInFolder[ti];
         TextStyle tf;
@@ -592,12 +727,12 @@ public:
             r.drawText(cnt.c_str(), row.right() - 16, row.y + 14, cs);
         }
         // Detalhe por efeito
-        Rectf panel{468, 168, 756, 486};
+        Rectf panel{468, 168, 756, 452};
         r.fillRoundRect(panel, 12, Color(14, 18, 24, 220));
         SoundTheme th = soundThemeFor(DashboardId(sel_));
         for (int s = 0; s < kSfxCount; ++s) {
             const OrigEntry& e = rep_.e[int(th)][s];
-            float y = panel.y + 14 + s * 54.0f;
+            float y = panel.y + 12 + s * 50.0f;
             Color dot = e.status == OrigStatus::Loaded ? Color(110, 210, 90)
                         : e.status == OrigStatus::Missing ? Color(200, 90, 90) : Color(230, 170, 60);
             r.fillCircle(panel.x + 26, y + 14, 7, dot);
@@ -644,13 +779,16 @@ public:
             r.drawText(sit.c_str(), panel.x + 20, panel.bottom() - 30, ss);
         }
         r.fillRect(Rectf{0, 668, 1280, 52}, Color(0, 0, 0, 90));
-        drawHints(r, {{Button::A, "Testar efeito"}, {Button::Y, "Verificar pasta de novo"}, {Button::B, "Voltar"}}, 56, 694, 30,
-                  Color(205, 212, 220));
+        drawHints(r, {{Button::A, "Testar efeito"}, {Button::X, "Testar saída"}, {Button::Y, "Verificar pasta de novo"},
+                      {Button::B, "Voltar"}},
+                  56, 694, 30, Color(205, 212, 220));
         r.popAlpha();
     }
 
 private:
     NeutroBackdrop backdrop_;
+    double testAt_ = -1;
+    MixerStats statsAtTest_;
     OrigReport rep_;
     Tween enter_;
     int sel_ = 0, preview_ = 0;
@@ -701,6 +839,8 @@ private:
 
 }  // namespace
 
+std::string fitTextShared(IRenderer& r, const std::string& s, const TextStyle& st, float maxW) { return fitText(r, s, st, maxW); }
+
 std::unique_ptr<Screen> createBootScreen() { return std::unique_ptr<Screen>(new BootScreen()); }
 std::unique_ptr<Screen> createSettingsScreen() { return std::unique_ptr<Screen>(new SettingsScreen()); }
 std::unique_ptr<Screen> createAboutScreen() { return std::unique_ptr<Screen>(new AboutScreen()); }
@@ -712,6 +852,39 @@ std::unique_ptr<Screen> createErrorScreen(const std::string& title, const std::s
 std::unique_ptr<Screen> createConfirmDialog(const std::string& title, const std::string& message,
                                             std::function<void(Context&)> onYes) {
     return std::unique_ptr<Screen>(new ConfirmDialog(title, message, std::move(onYes)));
+}
+
+std::unique_ptr<Screen> createChoiceDialog(const std::string& title, const std::string& message,
+                                           std::vector<ChoiceOption> options,
+                                           std::function<void(Context&, int)> onChoose) {
+    return std::unique_ptr<Screen>(new ChoiceDialog(title, message, std::move(options), std::move(onChoose)));
+}
+
+std::unique_ptr<Screen> createExitDialog(Context& ctx) {
+    // Destinos verificados agora (caminho do Aurora, dash.xex), sem alterar nada.
+    const LaunchTarget aurora = ctx.app->exitTargetInfo(ExitTarget::Aurora);
+    const LaunchTarget dash = ctx.app->exitTargetInfo(ExitTarget::Dashboard);
+    const bool console = ctx.platform->canLaunchTitles();
+    std::vector<ChoiceOption> opts;
+    if (console) {
+        opts.push_back({"Voltar ao Aurora", aurora.found ? aurora.path + "  ·  " + aurora.source : aurora.reason, aurora.found});
+        opts.push_back({"Voltar ao Xbox Dashboard", dash.found ? dash.path + "  ·  pode ser redirecionado pelo DashLaunch" : dash.reason,
+                        dash.found});
+    } else {
+        opts.push_back({"Voltar ao Aurora", "Prévia do Windows: fecha a janela", true});
+        opts.push_back({"Voltar ao Xbox Dashboard", "Prévia do Windows: fecha a janela", true});
+    }
+    opts.push_back({"Cancelar", "Continuar no Neutro X", true});
+    return createChoiceDialog(
+        "Sair do Neutro X", "O Neutro X fecha os próprios recursos e inicia o destino escolhido. Nada do sistema é alterado.",
+        std::move(opts), [](Context& c, int i) {
+            if (i == 2) return;
+            std::string why;
+            if (!c.app->requestExitTo(i == 0 ? ExitTarget::Aurora : ExitTarget::Dashboard, &why)) {
+                c.sfx(Sfx::Error);
+                c.app->toast("Não foi possível sair: " + why);
+            }
+        });
 }
 
 }  // namespace nx
